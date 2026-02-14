@@ -13,7 +13,16 @@ from PIL import Image
 
 from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
 
-_DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "data" / "icons"
+def _default_cache_dir() -> Path:
+    """Return persistent cache dir next to exe or in project data dir."""
+    import sys
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).parent
+    else:
+        base = Path(__file__).parent.parent / "data"
+    d = base / "icons"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 class IconCache:
@@ -21,10 +30,10 @@ class IconCache:
 
     def __init__(
         self,
-        cache_dir: Path = _DEFAULT_CACHE_DIR,
+        cache_dir: Optional[Path] = None,
         thumbnail_size: int = 64,
     ) -> None:
-        self._cache_dir = cache_dir
+        self._cache_dir = cache_dir if cache_dir is not None else _default_cache_dir()
         self._thumbnail_size = thumbnail_size
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 

@@ -46,7 +46,13 @@ def _load_items():
 
 def _load_catalogue_recipes():
     """Load recipes from game catalogue if available."""
-    cat_path = DATA_DIR / "icons" / "game_catalogue.json"
+    import sys
+    # In frozen .exe, catalogue is cached next to the executable
+    if getattr(sys, "frozen", False):
+        cache_dir = Path(sys.executable).parent / "icons"
+    else:
+        cache_dir = DATA_DIR / "icons"
+    cat_path = cache_dir / "game_catalogue.json"
     if not cat_path.exists():
         return []
     with open(cat_path) as f:

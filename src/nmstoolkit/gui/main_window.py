@@ -50,6 +50,20 @@ KEY_MAP_PATH = DATA_DIR / "jsonmap.txt"
 ACCOUNT_KEY_MAP_PATH = DATA_DIR / "jsonmapac.txt"
 
 
+def _user_cache_dir() -> Path:
+    """Return persistent cache dir next to the executable (or project root in dev)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        # PyInstaller .exe — use the folder the .exe lives in
+        base = Path(sys.executable).parent
+    else:
+        # Development — use project data dir
+        base = DATA_DIR
+    cache = base / "icons"
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
 def _detect_save_dirs() -> List[Path]:
     """Return candidate NMS save directories that exist on this system."""
     candidates = []
@@ -258,7 +272,7 @@ class MainWindow(QMainWindow):
         Rebuilds icon_map from catalogue if the catalogue has more items
         than the current map (handles stale maps from prior sessions).
         """
-        cache_dir = DATA_DIR / "icons"
+        cache_dir = _user_cache_dir()
 
         from nmstoolkit.gui.widgets.inventory_grid import set_icon_provider, set_catalogue
         from nmstoolkit.core.game_catalogue import GameCatalogue
@@ -328,7 +342,7 @@ class MainWindow(QMainWindow):
                 pak_dir = game_path
                 game_path = game_path.parent.parent
 
-        cache_dir = DATA_DIR / "icons"
+        cache_dir = _user_cache_dir()
 
         extractor = IconExtractor(game_path, cache_dir)
 
