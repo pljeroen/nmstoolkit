@@ -1,0 +1,29 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python
+*.py text diff=python
+*.pyi text diff=python
+
+# Data files
+*.json text
+*.txt text
+*.yaml text
+*.yml text
+*.md text
+*.toml text
+*.cfg text
+*.ini text
+
+# Binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.dds binary
+*.pak binary
+*.hg binary
+*.mbin binary
+
+# Git
+.gitattributes text
+.gitignore text

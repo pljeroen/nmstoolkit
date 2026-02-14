@@ -1,0 +1,281 @@
+"""Ships editor tab — ownership list, inventories, seed/type/class."""
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
+from nmstoolkit.gui.widgets.seed_editor import SeedEditor
+
+_INV_CLASSES = ["C", "B", "A", "S"]
+
+# Ship type detection from Resource.Filename
+_SHIP_TYPE_PATTERNS = {
+    "DROPSHIP": "Hauler",
+    "SHUTTLE": "Shuttle",
+    "SCIENTIFIC": "Explorer",
+    "FIGHTER": "Fighter",
+    "YOURSHIP": "Starter",
+    "SAILSHIP": "Solar",
+    "ALIENSHI": "Living Ship",
+    "ROBOTSHIP": "Interceptor",
+    "SENTINELSHIP": "Sentinel",
+    "ROYAL": "Exotic",
+    "S_CLASS": "S-Class",
+    "CORVETTE": "Corvette",
+}
+
+# Base stat IDs
+_STAT_IDS = [
+    ("^SHIP_DAMAGE", "Damage"),
+    ("^SHIP_SHIELD", "Shield"),
+    ("^SHIP_HYPERDRIVE", "Hyperdrive"),
+    ("^SHIP_AGILE", "Maneuverability"),
+]
+
+
+def _detect_ship_type(resource: dict) -> str:
+    """Detect ship type from Resource.Filename."""
+    filename = resource.get("Filename", "").upper()
+    for pattern, ship_type in _SHIP_TYPE_PATTERNS.items():
+        if pattern in filename:
+            return ship_type
+    return "Unknown"
+
+
+class ShipsTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._data = None
+        self._ships = []
+        self._current_index = -1
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QHBoxLayout(self)
+
+        # Left: ship list + details
+        left = QWidget()
+        left.setMaximumWidth(340)
+        left_layout = QVBoxLayout(left)
+
+        self._ship_list = QListWidget()
+        self._ship_list.currentRowChanged.connect(self._on_ship_selected)
+        left_layout.addWidget(self._ship_list)
+
+        # Sort buttons
+        sort_bar = QHBoxLayout()
+        self._move_up_btn = QPushButton("Move Up")
+        self._move_up_btn.clicked.connect(self._on_move_up)
+        sort_bar.addWidget(self._move_up_btn)
+        self._move_down_btn = QPushButton("Move Down")
+        self._move_down_btn.clicked.connect(self._on_move_down)
+        sort_bar.addWidget(self._move_down_btn)
+        self._set_primary_btn = QPushButton("Set Primary")
+        self._set_primary_btn.clicked.connect(self._on_set_primary)
+        sort_bar.addWidget(self._set_primary_btn)
+        left_layout.addLayout(sort_bar)
+
+        # Ship details
+        details = QGroupBox("Ship Details")
+        det_layout = QFormLayout(details)
+
+        self._name_edit = QLineEdit()
+        self._name_edit.editingFinished.connect(self._on_name_changed)
+        det_layout.addRow("Name:", self._name_edit)
+
+        self._type_label = QLabel("—")
+        det_layout.addRow("Type:", self._type_label)
+
+        self._class_combo = QComboBox()
+        self._class_combo.addItems(_INV_CLASSES)
+        self._class_combo.currentTextChanged.connect(self._on_class_changed)
+        det_layout.addRow("Class:", self._class_combo)
+
+        self._seed_editor = SeedEditor("Seed")
+        self._seed_editor.seed_changed.connect(self._on_seed_changed)
+        det_layout.addRow("Seed:", self._seed_editor)
+
+        left_layout.addWidget(details)
+
+        # Base stats
+        stats_group = QGroupBox("Base Stats")
+        stats_layout = QFormLayout(stats_group)
+        self._stat_spinners = {}
+        for stat_id, label in _STAT_IDS:
+            spinner = QDoubleSpinBox()
+            spinner.setRange(0, 99999)
+            spinner.setDecimals(1)
+            spinner.valueChanged.connect(
+                lambda val, sid=stat_id: self._on_stat_changed(sid, val)
+            )
+            stats_layout.addRow(f"{label}:", spinner)
+            self._stat_spinners[stat_id] = spinner
+        left_layout.addWidget(stats_group)
+        layout.addWidget(left)
+
+        # Right: inventory tabs
+        right = QTabWidget()
+        self._inv_general = InventoryGrid("General")
+        self._inv_tech = InventoryGrid("Technology")
+        self._inv_cargo = InventoryGrid("Cargo")
+        right.addTab(self._inv_general, "General")
+        right.addTab(self._inv_tech, "Technology")
+        right.addTab(self._inv_cargo, "Cargo")
+        layout.addWidget(right)
+
+    def set_data(self, psd: dict):
+        self._data = psd
+        self._ships = psd.get("ShipOwnership", [])
+        self._current_index = -1
+        self._refresh_list()
+        if self._ships:
+            self._ship_list.setCurrentRow(0)
+
+    def _refresh_list(self):
+        current = self._ship_list.currentRow()
+        self._ship_list.clear()
+        primary = self._data.get("PrimaryShip", 0) if self._data else 0
+        for i, ship in enumerate(self._ships):
+            name = ship.get("Name", "") or f"Ship {i + 1}"
+            resource = ship.get("Resource", {})
+            ship_type = _detect_ship_type(resource)
+            inv_class = ship.get("Inventory", {}).get("Class", {}).get("InventoryClass", "?")
+            marker = " *" if i == primary else ""
+            item = QListWidgetItem(f"{i + 1}. {name} ({ship_type} {inv_class}){marker}")
+            self._ship_list.addItem(item)
+        if 0 <= current < len(self._ships):
+            self._ship_list.setCurrentRow(current)
+
+    def _current_ship(self):
+        if self._current_index < 0 or self._current_index >= len(self._ships):
+            return None
+        return self._ships[self._current_index]
+
+    def _on_ship_selected(self, index):
+        if index < 0 or index >= len(self._ships):
+            self._current_index = -1
+            return
+        self._current_index = index
+        ship = self._ships[index]
+
+        # Name
+        self._name_edit.blockSignals(True)
+        self._name_edit.setText(ship.get("Name", ""))
+        self._name_edit.blockSignals(False)
+
+        # Type (from resource filename)
+        resource = ship.get("Resource", {})
+        self._type_label.setText(_detect_ship_type(resource))
+
+        # Class (from Inventory.Class)
+        inv = ship.get("Inventory", {})
+        inv_class = inv.get("Class", {}).get("InventoryClass", "C")
+        self._class_combo.blockSignals(True)
+        idx = self._class_combo.findText(inv_class)
+        self._class_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._class_combo.blockSignals(False)
+
+        # Seed
+        self._seed_editor.set_seed(ship.get("Seed", ""))
+
+        # Base stats
+        base_stats = inv.get("BaseStatValues", [])
+        stats_by_id = {}
+        for bs in base_stats:
+            if isinstance(bs, dict):
+                stats_by_id[bs.get("BaseStatID", "")] = bs.get("Value", 0)
+        for stat_id, spinner in self._stat_spinners.items():
+            spinner.blockSignals(True)
+            spinner.setValue(stats_by_id.get(stat_id, 0))
+            spinner.blockSignals(False)
+
+        # Inventories
+        self._inv_general.set_inventory(inv)
+        self._inv_tech.set_inventory(ship.get("Inventory_TechOnly", {}))
+        self._inv_cargo.set_inventory(ship.get("Inventory_Cargo", {}))
+
+    def _on_name_changed(self):
+        ship = self._current_ship()
+        if ship is None:
+            return
+        ship["Name"] = self._name_edit.text()
+        self._refresh_list()
+
+    def _on_class_changed(self, text):
+        ship = self._current_ship()
+        if ship is None:
+            return
+        inv = ship.get("Inventory", {})
+        cls = inv.get("Class", {})
+        if isinstance(cls, dict):
+            cls["InventoryClass"] = text
+        else:
+            inv["Class"] = {"InventoryClass": text}
+        self._refresh_list()
+
+    def _on_seed_changed(self, seed):
+        ship = self._current_ship()
+        if ship is not None:
+            ship["Seed"] = seed
+            resource = ship.get("Resource", {})
+            if isinstance(resource, dict):
+                resource["Seed"] = seed
+
+    def _on_stat_changed(self, stat_id, value):
+        ship = self._current_ship()
+        if ship is None:
+            return
+        inv = ship.get("Inventory", {})
+        base_stats = inv.get("BaseStatValues", [])
+        for bs in base_stats:
+            if isinstance(bs, dict) and bs.get("BaseStatID") == stat_id:
+                bs["Value"] = value
+                return
+        # Add if not found
+        base_stats.append({"BaseStatID": stat_id, "Value": value})
+        inv["BaseStatValues"] = base_stats
+
+    def _on_move_up(self):
+        idx = self._current_index
+        if idx <= 0 or idx >= len(self._ships):
+            return
+        self._swap_ships(idx, idx - 1)
+        self._ship_list.setCurrentRow(idx - 1)
+
+    def _on_move_down(self):
+        idx = self._current_index
+        if idx < 0 or idx >= len(self._ships) - 1:
+            return
+        self._swap_ships(idx, idx + 1)
+        self._ship_list.setCurrentRow(idx + 1)
+
+    def _on_set_primary(self):
+        idx = self._current_index
+        if idx < 0 or idx >= len(self._ships) or self._data is None:
+            return
+        self._data["PrimaryShip"] = idx
+        self._refresh_list()
+
+    def _swap_ships(self, a, b):
+        """Swap two ships in the ownership list, adjusting PrimaryShip index."""
+        self._ships[a], self._ships[b] = self._ships[b], self._ships[a]
+        if self._data:
+            primary = self._data.get("PrimaryShip", 0)
+            if primary == a:
+                self._data["PrimaryShip"] = b
+            elif primary == b:
+                self._data["PrimaryShip"] = a
+        self._refresh_list()

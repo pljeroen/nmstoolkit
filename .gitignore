@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+dist/
+build/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.tddv6/
+.hypothesis/
+# Extracted game icons and catalogue (large, generated from PAK files)
+src/nmstoolkit/data/icons/
+src/nmstoolkit/data/game_catalogue.json
+error_pictures/
+SESSION_HANDOFF.md

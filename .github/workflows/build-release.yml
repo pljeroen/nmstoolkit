@@ -1,0 +1,72 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install .
+          pip install pyinstaller
+
+      - name: Build exe
+        shell: cmd
+        run: |
+          pyinstaller --onefile --windowed --name nmstoolkit ^
+            --add-data "src\nmstoolkit\data;nmstoolkit\data" ^
+            --hidden-import nmstoolkit.gui.tabs.exosuit_tab ^
+            --hidden-import nmstoolkit.gui.tabs.ships_tab ^
+            --hidden-import nmstoolkit.gui.tabs.corvette_tab ^
+            --hidden-import nmstoolkit.gui.tabs.multitools_tab ^
+            --hidden-import nmstoolkit.gui.tabs.squadron_tab ^
+            --hidden-import nmstoolkit.gui.tabs.freighter_tab ^
+            --hidden-import nmstoolkit.gui.tabs.frigates_tab ^
+            --hidden-import nmstoolkit.gui.tabs.vehicles_tab ^
+            --hidden-import nmstoolkit.gui.tabs.companions_tab ^
+            --hidden-import nmstoolkit.gui.tabs.bases_tab ^
+            --hidden-import nmstoolkit.gui.tabs.settlements_tab ^
+            --hidden-import nmstoolkit.gui.tabs.discoveries_tab ^
+            --hidden-import nmstoolkit.gui.tabs.milestones_tab ^
+            --hidden-import nmstoolkit.gui.tabs.expedition_tab ^
+            --hidden-import nmstoolkit.gui.tabs.account_tab ^
+            --hidden-import nmstoolkit.gui.tabs.recipe_finder_tab ^
+            --hidden-import nmstoolkit.gui.tabs.fish_finder_tab ^
+            --hidden-import nmstoolkit.gui.tabs.json_editor_tab ^
+            src\nmstoolkit\app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmstoolkit-windows
+          path: dist/nmstoolkit.exe
+
+  create-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nmstoolkit-windows
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nmstoolkit.exe
+          generate_release_notes: true
+          prerelease: true
+          name: "v${{ github.ref_name }} (beta)"

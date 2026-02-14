@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmstoolkit"
+version = "0.1.0"
+description = "No Man's Sky save editor and toolkit"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Jeroen Visser"},
+]
+keywords = ["nms", "no-mans-sky", "save-editor", "toolkit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "PySide6>=6.6",
+    "lz4>=4.3",
+    "hgpaktool>=1.1",
+    "zstandard>=0.22",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "hypothesis>=6.82",
+    "pytest-cov>=4.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/pljeroen/nmstoolkit"
+Repository = "https://github.com/pljeroen/nmstoolkit"
+Issues = "https://github.com/pljeroen/nmstoolkit/issues"
+
+[project.scripts]
+nmstoolkit = "nmstoolkit.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

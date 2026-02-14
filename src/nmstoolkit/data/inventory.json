@@ -1,0 +1,203 @@
+{
+  "High": [
+    {
+      "group": "Default",
+      "product": 5,
+      "substance": 9999
+    },
+    {
+      "group": "Personal",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "PersonalCargo",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "Ship",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "ShipCargo",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "Freighter",
+      "product": 20,
+      "substance": 9999
+    },
+    {
+      "group": "FreighterCargo",
+      "product": 20,
+      "substance": 9999
+    },
+    {
+      "group": "Vehicle",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "Chest",
+      "product": 20,
+      "substance": 9999
+    },
+    {
+      "group": "BaseCapsule",
+      "product": 100,
+      "substance": 9999
+    },
+    {
+      "group": "MaintenanceObject",
+      "product": 10,
+      "substance": 9999
+    },
+    {
+      "group": "UIPopup",
+      "product": 1,
+      "substance": 9999
+    },
+    {
+      "group": "SeasonTransfer",
+      "product": 20,
+      "substance": 9999
+    }
+  ],
+  "Normal": [
+    {
+      "group": "Default",
+      "product": 5,
+      "substance": 500
+    },
+    {
+      "group": "Personal",
+      "product": 10,
+      "substance": 500
+    },
+    {
+      "group": "PersonalCargo",
+      "product": 10,
+      "substance": 500
+    },
+    {
+      "group": "Ship",
+      "product": 10,
+      "substance": 1000
+    },
+    {
+      "group": "ShipCargo",
+      "product": 10,
+      "substance": 1000
+    },
+    {
+      "group": "Freighter",
+      "product": 10,
+      "substance": 2000
+    },
+    {
+      "group": "FreighterCargo",
+      "product": 20,
+      "substance": 2000
+    },
+    {
+      "group": "Vehicle",
+      "product": 10,
+      "substance": 1000
+    },
+    {
+      "group": "Chest",
+      "product": 20,
+      "substance": 1000
+    },
+    {
+      "group": "BaseCapsule",
+      "product": 100,
+      "substance": 2000
+    },
+    {
+      "group": "MaintenanceObject",
+      "product": 10,
+      "substance": 250
+    },
+    {
+      "group": "UIPopup",
+      "product": 1,
+      "substance": 250
+    },
+    {
+      "group": "SeasonTransfer",
+      "product": 20,
+      "substance": 9999
+    }
+  ],
+  "Low": [
+    {
+      "group": "Default",
+      "product": 3,
+      "substance": 150
+    },
+    {
+      "group": "Personal",
+      "product": 3,
+      "substance": 300
+    },
+    {
+      "group": "PersonalCargo",
+      "product": 5,
+      "substance": 300
+    },
+    {
+      "group": "Ship",
+      "product": 3,
+      "substance": 300
+    },
+    {
+      "group": "ShipCargo",
+      "product": 5,
+      "substance": 750
+    },
+    {
+      "group": "Freighter",
+      "product": 5,
+      "substance": 750
+    },
+    {
+      "group": "FreighterCargo",
+      "product": 10,
+      "substance": 750
+    },
+    {
+      "group": "Vehicle",
+      "product": 3,
+      "substance": 300
+    },
+    {
+      "group": "Chest",
+      "product": 10,
+      "substance": 1000
+    },
+    {
+      "group": "BaseCapsule",
+      "product": 50,
+      "substance": 1250
+    },
+    {
+      "group": "MaintenanceObject",
+      "product": 5,
+      "substance": 150
+    },
+    {
+      "group": "UIPopup",
+      "product": 1,
+      "substance": 150
+    },
+    {
+      "group": "SeasonTransfer",
+      "product": 20,
+      "substance": 9999
+    }
+  ]
+}
