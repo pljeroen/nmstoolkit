@@ -95,6 +95,24 @@ def _detect_save_dirs() -> List[Path]:
     return candidates
 
 
+def _derive_module_id(path_parts: list) -> str:
+    """Derive a corvette module ID (e.g. B_COK_A) from a SCENE file path.
+
+    Path pattern: models/common/spacecraft/corvette/parts/<part_dir>/...
+    Maps part_dir to module ID prefix, e.g. 'cok_a' → 'B_COK_A'.
+    """
+    try:
+        parts_idx = path_parts.index("parts")
+        part_dir = path_parts[parts_idx + 1] if parts_idx + 1 < len(path_parts) else ""
+    except ValueError:
+        return ""
+
+    if not part_dir:
+        return ""
+
+    return "B_" + part_dir.upper()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -269,6 +287,7 @@ class MainWindow(QMainWindow):
 
         tools_menu = menu.addMenu("&Tools")
         tools_menu.addAction("Extract Game &Icons...", self._on_extract_icons)
+        tools_menu.addAction("Extract Corvette &Models...", self._on_extract_corvette_models)
         tools_menu.addAction("External &Dependencies...", self._on_external_deps)
 
     # ------------------------------------------------------------------
@@ -455,6 +474,128 @@ class MainWindow(QMainWindow):
             f"Mapped {len(icon_map)} items to icons.\n\n"
             "Icons will load automatically on next startup."
         )
+
+    def _on_extract_corvette_models(self):
+        """Extract corvette module 3D models from game PAK files."""
+        game_path = QFileDialog.getExistingDirectory(
+            self, "Select NMS Game Directory (PCBANKS or parent)",
+            "", QFileDialog.ShowDirsOnly,
+        )
+        if not game_path:
+            return
+
+        game_path = Path(game_path)
+        pak_dir = None
+        pcbanks = game_path / "GAMEDATA" / "PCBANKS"
+        if pcbanks.exists():
+            pak_dir = pcbanks
+        elif (game_path / "NMSARC.Precache.pak").exists():
+            pak_dir = game_path
+
+        if pak_dir is None:
+            QMessageBox.warning(
+                self, "Game Data Not Found",
+                f"Could not find PCBANKS in:\n{game_path}\n\n"
+                "Select the NMS install directory or the PCBANKS folder."
+            )
+            return
+
+        mbin_compiler = self._find_mbin_compiler(pak_dir)
+        if mbin_compiler is None:
+            QMessageBox.warning(
+                self, "MBINCompiler Not Found",
+                "MBINCompiler is needed to convert SCENE.MBIN files.\n"
+                "Use Tools → External Dependencies to download it first."
+            )
+            return
+
+        progress = QProgressDialog("Extracting corvette models...", None, 0, 0, self)
+        progress.setWindowTitle("Extract Corvette Models")
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
+            from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
+            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline
+
+            import sys
+            if getattr(sys, "frozen", False):
+                cache_dir = Path(sys.executable).parent / "meshes"
+            else:
+                cache_dir = DATA_DIR / "meshes"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            pipeline = CorvetteMeshPipeline(cache_dir=cache_dir)
+            converter = MbinCompilerAdapter(mbin_compiler)
+
+            # Find corvette model SCENE.MBIN files in PAK
+            scene_prefix = "models/common/spacecraft/corvette/"
+            with HgpakAdapter.from_path(pak_dir / "NMSARC.Precache.pak") as pak:
+                all_files = pak.list_files()
+                scene_files = [
+                    f for f in all_files
+                    if f.lower().startswith(scene_prefix)
+                    and f.lower().endswith(".scene.mbin")
+                ]
+                geometry_files = [
+                    f for f in all_files
+                    if f.lower().startswith(scene_prefix)
+                    and f.lower().endswith("geometry.mbin")
+                ]
+
+                if not scene_files:
+                    progress.close()
+                    QMessageBox.information(
+                        self, "No Corvette Models",
+                        "No corvette SCENE files found in PAK.\n"
+                        "The corvette models may be in a different PAK file."
+                    )
+                    return
+
+                scene_data = pak.extract(paths=scene_files)
+                geometry_data = pak.extract(paths=geometry_files)
+
+            # Convert SCENE.MBIN → EXML
+            scene_exml = converter.convert_batch(scene_data)
+
+            # Extract each module
+            count = 0
+            for scene_path, exml_str in scene_exml.items():
+                # Derive module ID from path: models/.../parts/cok_a/... → B_COK_A
+                parts = scene_path.lower().replace("\\", "/").split("/")
+                module_id = _derive_module_id(parts)
+                if not module_id:
+                    continue
+
+                # Map geometry refs: the EXML references geometry paths
+                # in uppercase — try both cases
+                geo_map = {}
+                for geo_path, geo_bytes in geometry_data.items():
+                    geo_map[geo_path] = geo_bytes
+                    geo_map[geo_path.upper()] = geo_bytes
+
+                entry = pipeline.extract_module(
+                    module_id=module_id,
+                    scene_exml=exml_str,
+                    geometry_data=geo_map,
+                )
+                if entry and entry.meshes:
+                    count += 1
+
+            progress.close()
+            QMessageBox.information(
+                self, "Models Extracted",
+                f"Extracted {count} corvette module meshes.\n"
+                f"Cached to: {cache_dir}"
+            )
+        except Exception as e:
+            progress.close()
+            QMessageBox.warning(
+                self, "Extraction Failed",
+                f"Corvette model extraction failed:\n{e}"
+            )
 
     def _on_external_deps(self):
         """Open the external dependencies management dialog."""

@@ -1,6 +1,7 @@
 """Corvette editor tab — list completed corvettes + active draft, with inventory editing."""
 
 from collections import Counter
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
@@ -276,6 +277,7 @@ class CorvetteTab(QWidget):
                     self._3d_placeholder.deleteLater()
                     self._3d_placeholder = None
                     self._draft_stack.addWidget(self._3d_view)
+                    self._load_cached_meshes()
                 except Exception as exc:
                     # OpenGL not available — show error and stay on 2D
                     if self._3d_placeholder is not None:
@@ -293,6 +295,35 @@ class CorvetteTab(QWidget):
             # Switch to 2D
             self._draft_stack.setCurrentIndex(0)
             self._view_toggle_btn.setText("Switch to 3D View")
+
+    def _load_cached_meshes(self):
+        """Load cached mesh data into the 3D view if available."""
+        if self._3d_view is None:
+            return
+        try:
+            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline
+            cache_dir = self._mesh_cache_dir()
+            if not cache_dir.exists():
+                return
+            pipeline = CorvetteMeshPipeline(cache_dir=cache_dir)
+            for module_id in pipeline.list_cached():
+                entry = pipeline.load_entry(module_id)
+                if entry is not None and entry.meshes:
+                    self._3d_view.set_mesh_data(module_id, entry.meshes)
+                    if entry.texture_path and entry.texture_path.exists():
+                        self._3d_view.set_texture(module_id, entry.texture_path)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _mesh_cache_dir() -> Path:
+        """Return mesh cache directory."""
+        import sys
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).parent
+        else:
+            base = Path(__file__).parent.parent.parent / "data"
+        return base / "meshes"
 
     def _on_corvette_selected(self, index):
         if index < 0:

@@ -188,6 +188,27 @@ class TestCubeMesh:
         assert m == _CUBE_MESH
 
 
+class TestDeriveModuleId:
+    def test_cockpit(self):
+        from nmstoolkit.gui.main_window import _derive_module_id
+        parts = "models/common/spacecraft/corvette/parts/cok_a/entities/cok_a.scene.mbin".split("/")
+        assert _derive_module_id(parts) == "B_COK_A"
+
+    def test_wing(self):
+        from nmstoolkit.gui.main_window import _derive_module_id
+        parts = "models/common/spacecraft/corvette/parts/wng_b/wng_b.scene.mbin".split("/")
+        assert _derive_module_id(parts) == "B_WNG_B"
+
+    def test_no_parts_dir(self):
+        from nmstoolkit.gui.main_window import _derive_module_id
+        parts = "models/common/spacecraft/corvette/geometry.mbin".split("/")
+        assert _derive_module_id(parts) == ""
+
+    def test_empty(self):
+        from nmstoolkit.gui.main_window import _derive_module_id
+        assert _derive_module_id([]) == ""
+
+
 class TestMeshDataApi:
     def test_corvette_view_accepts_mesh_data(self):
         from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
