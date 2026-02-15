@@ -172,3 +172,49 @@ def _find_column(table, header_text):
         if item and item.text() == header_text:
             return col
     raise ValueError(f"Column '{header_text}' not found")
+
+
+class TestBaseExportImport:
+    """R-BASE-05: Export and import individual bases as JSON."""
+
+    def test_export_button_exists(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        tab = BasesTab()
+        assert hasattr(tab, "_export_btn")
+
+    def test_import_button_exists(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        tab = BasesTab()
+        assert hasattr(tab, "_import_btn")
+
+    def test_export_base_data(self):
+        """Export should produce a dict with Objects, Name, BaseType."""
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        objects = [_make_object("^S_FLOOR"), _make_object("^S_WALL")]
+        psd = {"PersistentPlayerBases": [_make_base("Export Test", objects)]}
+        tab = BasesTab()
+        tab.set_data(psd)
+        exported = tab._get_export_data(0)
+        assert exported["Name"] == "Export Test"
+        assert len(exported["Objects"]) == 2
+        assert "BaseType" in exported
+
+    def test_import_base_adds_to_list(self):
+        """Importing a base should add it to PersistentPlayerBases."""
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        psd = {"PersistentPlayerBases": [_make_base("Existing")]}
+        tab = BasesTab()
+        tab.set_data(psd)
+        new_base = {
+            "Name": "Imported Base",
+            "BaseType": {"PersistentBaseTypes": "HomePlanetBase"},
+            "Objects": [_make_object("^S_FLOOR")],
+            "GalacticAddress": 0,
+        }
+        tab._import_base_data(new_base)
+        assert len(psd["PersistentPlayerBases"]) == 2
+        assert psd["PersistentPlayerBases"][-1]["Name"] == "Imported Base"

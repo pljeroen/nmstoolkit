@@ -174,12 +174,48 @@ class TestTypeFilter:
 class TestAddressFormatting:
     """Addresses display as hex for readability."""
 
-    def test_large_int_address_shows_hex(self):
+    def test_large_int_address_decoded(self):
         from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
 
         records = [_make_record("SolarSystem", name="Test", address=77004501068061)]
         tab = DiscoveriesTab()
         tab.set_data(_make_discovery_data(records))
         addr = tab._table.item(0, 3).text()
-        # Should be hex formatted, not a huge decimal
-        assert "0x" in addr.lower() or len(addr) < 20
+        # Should be decoded galactic address, not a huge decimal
+        assert "Planet" in addr or "System" in addr or "Region" in addr
+
+
+class TestUndiscoveredFilter:
+    """R-DISC-01: Filter for undiscovered entries only."""
+
+    def test_undiscovered_checkbox_exists(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        tab = DiscoveriesTab()
+        assert hasattr(tab, "_undiscovered_check")
+
+    def test_undiscovered_filter_hides_named(self):
+        """When undiscovered-only is checked, named entries should be hidden."""
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        records = [
+            _make_record("SolarSystem", name="Named System"),
+            _make_record("SolarSystem"),  # no name = undiscovered
+            _make_record("Planet"),  # no name = undiscovered
+        ]
+        tab = DiscoveriesTab()
+        tab.set_data(_make_discovery_data(records))
+        assert tab._table.rowCount() == 3  # All shown initially
+        tab._undiscovered_check.setChecked(True)
+        assert tab._table.rowCount() == 2  # Only unnamed shown
+
+    def test_address_decoded_as_galactic(self):
+        """Address column should show decoded galactic coordinates."""
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        records = [_make_record("SolarSystem", name="Test", address=0x0001000200030004)]
+        tab = DiscoveriesTab()
+        tab.set_data(_make_discovery_data(records))
+        addr_text = tab._table.item(0, 3).text()
+        # Should contain decoded galactic address info, not just hex
+        assert "Planet" in addr_text or "System" in addr_text or "Region" in addr_text

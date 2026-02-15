@@ -1,6 +1,7 @@
 """Discoveries editor tab."""
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -11,6 +12,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from nmstoolkit.gui.tabs.bases_tab import _decode_galactic_address
 
 
 def _format_address(address) -> str:
@@ -44,6 +47,10 @@ class DiscoveriesTab(QWidget):
         self._type_filter.addItem("All")
         self._type_filter.currentIndexChanged.connect(self._apply_filter)
         filter_bar.addWidget(self._type_filter)
+
+        self._undiscovered_check = QCheckBox("Undiscovered only")
+        self._undiscovered_check.toggled.connect(self._apply_filter)
+        filter_bar.addWidget(self._undiscovered_check)
 
         filter_bar.addWidget(QLabel("Search:"))
         self._search = QLineEdit()
@@ -90,6 +97,7 @@ class DiscoveriesTab(QWidget):
     def _apply_filter(self):
         type_filter = self._type_filter.currentText()
         search_text = self._search.text().lower()
+        undiscovered_only = self._undiscovered_check.isChecked()
 
         filtered = []
         for record in self._records:
@@ -105,17 +113,22 @@ class DiscoveriesTab(QWidget):
             owner = ows.get("USN", "")
             address = dd.get("UA", "")
 
+            # Undiscovered filter — hide entries with names
+            is_named = bool(name)
+
             # Fallback for unnamed discoveries
             if not name:
                 addr_str = _format_address(address)
                 name = f"<unknown name> ({addr_str})" if addr_str else "<unknown name>"
 
+            if undiscovered_only and is_named:
+                continue
             if type_filter != "All" and disc_type != type_filter:
                 continue
             if search_text and search_text not in name.lower() and search_text not in owner.lower():
                 continue
 
-            filtered.append((disc_type, name, owner, _format_address(address)))
+            filtered.append((disc_type, name, owner, _decode_galactic_address(address)))
 
         type_counts = {}
         for record in self._records:

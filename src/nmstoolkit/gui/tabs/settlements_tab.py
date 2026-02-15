@@ -1,5 +1,8 @@
 """Settlements editor tab."""
 
+import json
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -7,6 +10,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -14,6 +19,34 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.tabs.bases_tab import _decode_galactic_address
 from nmstoolkit.gui.widgets.inventory_grid import get_item_display_name
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
+
+_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def _load_perk_data():
+    """Load settlement perk definitions from settlements.json."""
+    path = _DATA_DIR / "settlements.json"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    return {entry["id"]: entry for entry in data if isinstance(entry, dict) and "id" in entry}
+
+
+_PERK_DATA = _load_perk_data()
+
+
+def _perk_display_name(perk_id: str) -> str:
+    """Resolve a perk ID to a human-readable name."""
+    entry = _PERK_DATA.get(perk_id)
+    if entry:
+        name = entry.get("name", perk_id)
+        if entry.get("beneficial"):
+            return f"{name} (+)"
+        elif entry.get("beneficial") is False:
+            return f"{name} (-)"
+        return name
+    return perk_id.lstrip("^")
 
 # Stats array indices (V2 format) — Population is stored separately
 _STATS_ARRAY_NAMES = [
@@ -77,14 +110,38 @@ class SettlementsTab(QWidget):
                 lambda val, idx=i, n=name: self._on_stat_changed(n, val)
             )
 
-        self._perks_label = QLabel("—")
-        self._perks_label.setWordWrap(True)
-        det_layout.addRow("Perks:", self._perks_label)
-
         self._judgement_label = QLabel("—")
         det_layout.addRow("Pending Judgement:", self._judgement_label)
 
         layout.addWidget(details)
+
+        # Perks group with list, dropdown, add/remove
+        perks_group = QGroupBox("Settlement Perks")
+        perks_layout = QVBoxLayout(perks_group)
+
+        self._perk_list = QListWidget()
+        self._perk_list.setMaximumHeight(120)
+        perks_layout.addWidget(self._perk_list)
+
+        perk_btn_row = QHBoxLayout()
+        self._perk_combo = QComboBox()
+        self._perk_combo.setMinimumWidth(200)
+        # Populate with all known perks
+        for perk_id, perk_info in sorted(_PERK_DATA.items(), key=lambda x: x[1].get("name", "")):
+            self._perk_combo.addItem(_perk_display_name(perk_id), perk_id)
+        perk_btn_row.addWidget(self._perk_combo)
+
+        self._add_perk_btn = QPushButton("Add")
+        self._add_perk_btn.clicked.connect(self._on_add_perk)
+        perk_btn_row.addWidget(self._add_perk_btn)
+
+        self._remove_perk_btn = QPushButton("Remove Selected")
+        self._remove_perk_btn.clicked.connect(self._on_remove_perk)
+        perk_btn_row.addWidget(self._remove_perk_btn)
+
+        perk_btn_row.addStretch()
+        perks_layout.addLayout(perk_btn_row)
+        layout.addWidget(perks_group)
 
         # Production Output group
         self._prod_group = QGroupBox("Production Output")
@@ -165,12 +222,13 @@ class SettlementsTab(QWidget):
                 val = stats[stat_idx] if stat_idx < len(stats) else 0
                 self._stat_editors[stat_name].set_value(val if isinstance(val, int) else 0)
 
+        # Populate perk list
         perks = s.get("Perks", [])
-        if isinstance(perks, list) and perks:
-            perk_names = [str(p) for p in perks if p]
-            self._perks_label.setText(", ".join(perk_names) if perk_names else "None")
-        else:
-            self._perks_label.setText("None")
+        self._perk_list.clear()
+        if isinstance(perks, list):
+            for perk_id in perks:
+                if perk_id:
+                    self._perk_list.addItem(_perk_display_name(str(perk_id)))
 
         judgement = s.get("PendingJudgementType", {})
         if isinstance(judgement, dict):
@@ -260,6 +318,32 @@ class SettlementsTab(QWidget):
         if index < len(production) and isinstance(production[index], dict):
             production[index][field] = value
 
+    def _on_add_perk(self):
+        """Add selected perk from dropdown to settlement."""
+        s = self._current_settlement()
+        if s is None:
+            return
+        perk_id = self._perk_combo.currentData()
+        if not perk_id:
+            return
+        perks = s.get("Perks", [])
+        perks.append(perk_id)
+        s["Perks"] = perks
+        self._perk_list.addItem(_perk_display_name(perk_id))
+
+    def _on_remove_perk(self):
+        """Remove selected perk from settlement."""
+        s = self._current_settlement()
+        if s is None:
+            return
+        row = self._perk_list.currentRow()
+        perks = s.get("Perks", [])
+        if row < 0 or row >= len(perks):
+            return
+        perks.pop(row)
+        s["Perks"] = perks
+        self._perk_list.takeItem(row)
+
     def _on_stat_changed(self, stat_name, value):
         """Write stat changes back to the settlement data dict."""
         s = self._current_settlement()
@@ -283,7 +367,7 @@ class SettlementsTab(QWidget):
         self._buildings_label.setText("—")
         for editor in self._stat_editors.values():
             editor.set_value(0)
-        self._perks_label.setText("—")
+        self._perk_list.clear()
         self._judgement_label.setText("—")
         self._prod_rows = []
         while self._prod_layout.count():

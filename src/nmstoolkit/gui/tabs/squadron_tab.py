@@ -76,9 +76,10 @@ class SquadronTab(QWidget):
         self._rank_combo.currentIndexChanged.connect(self._on_rank_changed)
         det_layout.addRow("Rank:", self._rank_combo)
 
-        self._ship_label = QLabel("—")
-        self._ship_label.setWordWrap(True)
-        det_layout.addRow("Ship:", self._ship_label)
+        self._ship_combo = QComboBox()
+        self._ship_combo.setMinimumWidth(200)
+        self._ship_combo.currentIndexChanged.connect(self._on_ship_selected)
+        det_layout.addRow("Ship:", self._ship_combo)
 
         self._npc_seed = SeedEditor("NPC Seed")
         self._npc_seed.seed_changed.connect(self._on_npc_seed_changed)
@@ -100,8 +101,18 @@ class SquadronTab(QWidget):
     def set_data(self, psd: dict):
         self._data = psd
         self._pilots = psd.get("SquadronPilots", [])
+        self._ships = psd.get("ShipOwnership", [])
         self._current_index = -1
         self._list.clear()
+
+        # Populate ship combo with player ships
+        self._ship_combo.blockSignals(True)
+        self._ship_combo.clear()
+        for i, ship in enumerate(self._ships):
+            name = ship.get("Name", "") or f"Ship {i + 1}"
+            ship_type = _extract_ship_type(ship.get("Resource", {}))
+            self._ship_combo.addItem(f"{name} ({ship_type})", i)
+        self._ship_combo.blockSignals(False)
 
         unlocked = psd.get("SquadronUnlockedPilotSlots", [])
         self._slots_label.setText(f"Unlocked pilot slots: {len(unlocked)}")
@@ -139,9 +150,34 @@ class SquadronTab(QWidget):
         self._rank_combo.setCurrentIndex(rank if 0 <= rank < self._rank_combo.count() else 0)
         self._rank_combo.blockSignals(False)
 
-        self._ship_label.setText(_extract_ship_type(ship))
+        # Select matching ship in combo by filename
+        ship_filename = ship.get("Filename", "")
+        self._ship_combo.blockSignals(True)
+        for i in range(self._ship_combo.count()):
+            ship_idx = self._ship_combo.itemData(i)
+            if ship_idx is not None and ship_idx < len(self._ships):
+                player_ship = self._ships[ship_idx]
+                if player_ship.get("Resource", {}).get("Filename", "") == ship_filename:
+                    self._ship_combo.setCurrentIndex(i)
+                    break
+        self._ship_combo.blockSignals(False)
         self._npc_seed.set_seed(npc.get("Seed", ""))
         self._ship_seed.set_seed(ship.get("Seed", ""))
+
+    def _on_ship_selected(self, combo_index):
+        """Update pilot's ShipResource when a ship is selected from dropdown."""
+        pilot = self._current_pilot()
+        if pilot is None or combo_index < 0:
+            return
+        ship_idx = self._ship_combo.itemData(combo_index)
+        if ship_idx is None or ship_idx >= len(self._ships):
+            return
+        player_ship = self._ships[ship_idx]
+        resource = player_ship.get("Resource", {})
+        pilot["ShipResource"] = {
+            "Filename": resource.get("Filename", ""),
+            "Seed": player_ship.get("Seed", ""),
+        }
 
     def _on_rank_changed(self, index):
         pilot = self._current_pilot()

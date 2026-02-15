@@ -224,3 +224,64 @@ class TestCorvetteModuleSummary:
         assert "Cockpit" in text
         assert "Wing" in text
         assert "Thruster" in text
+
+
+class TestCorvetteFilterExcludesNonCorvettes:
+    """R-CORV-01: Non-corvette ships must not appear in corvette selector."""
+
+    def test_fighter_excluded_from_corvettes(self, qapp):
+        """A fighter with no BIGGS filename should not appear as a corvette."""
+        from nmstoolkit.gui.tabs.corvette_tab import _is_corvette_ship
+
+        fighter = {
+            "Name": "My Fighter",
+            "Resource": {"Filename": "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN"},
+            "Inventory": {"Slots": [{"Id": "^YOURSHIP_LAUNCH", "Amount": 1}]},
+        }
+        assert _is_corvette_ship(fighter) is False
+
+    def test_shuttle_excluded_from_corvettes(self, qapp):
+        from nmstoolkit.gui.tabs.corvette_tab import _is_corvette_ship
+
+        shuttle = {
+            "Name": "My Shuttle",
+            "Resource": {"Filename": "MODELS/COMMON/SPACECRAFT/SHUTTLE/SHUTTLE_PROC.SCENE.MBIN"},
+            "Inventory": {"Slots": []},
+        }
+        assert _is_corvette_ship(shuttle) is False
+
+    def test_biggs_ship_is_corvette(self, qapp):
+        from nmstoolkit.gui.tabs.corvette_tab import _is_corvette_ship
+
+        corvette = {
+            "Name": "My Corvette",
+            "Resource": {"Filename": "MODELS/COMMON/SPACECRAFT/BIGGS/BIGGS.SCENE.MBIN"},
+            "Inventory": {"Slots": []},
+        }
+        assert _is_corvette_ship(corvette) is True
+
+    def test_non_corvette_not_in_dropdown(self, qapp):
+        """Only BIGGS ships should appear in the corvette dropdown, not fighters."""
+        tab = CorvetteTab()
+        psd = {
+            "ShipOwnership": [
+                {"Name": "Fighter", "Resource": {"Filename": "FIGHTER_PROC.SCENE.MBIN"},
+                 "Inventory": {"Slots": [], "ValidSlotIndices": [], "Class": {"InventoryClass": "A"},
+                               "Width": 10, "Height": 5}},
+                _make_corvette_ship("Real Corvette"),
+            ],
+        }
+        tab.set_data(psd)
+        # Only the corvette should appear, not the fighter
+        assert tab._corvette_combo.count() == 1
+        assert "Real Corvette" in tab._corvette_combo.itemText(0)
+
+
+class TestCorvetteModelGuidance:
+    """R-CORV-02: Show helpful message when models unavailable."""
+
+    def test_3d_placeholder_shows_guidance(self, qapp):
+        """When 3D view hasn't been initialized, placeholder should exist."""
+        tab = CorvetteTab()
+        assert tab._3d_view is None
+        assert tab._3d_placeholder is not None

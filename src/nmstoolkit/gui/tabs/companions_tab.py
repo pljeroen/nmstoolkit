@@ -189,22 +189,27 @@ class CompanionsTab(QWidget):
         self._descriptors_label.setStyleSheet("font-size: 11px; color: #aaa;")
         desc_outer.addWidget(self._descriptors_label)
 
+        # Selectable descriptor list
+        self._desc_list = QListWidget()
+        self._desc_list.setMinimumHeight(120)
+        desc_outer.addWidget(self._desc_list)
+        self._descriptor_edits = []
+
         # Scrollable container for descriptor edits
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(120)
+        scroll.setMinimumHeight(80)
         self._desc_container = QWidget()
         self._desc_layout = QVBoxLayout(self._desc_container)
         self._desc_layout.setContentsMargins(0, 0, 0, 0)
         scroll.setWidget(self._desc_container)
         desc_outer.addWidget(scroll)
-        self._descriptor_edits = []
 
         # Add/Remove buttons
         btn_row = QHBoxLayout()
         self._add_desc_btn = QPushButton("Add Trait")
         self._add_desc_btn.clicked.connect(self._on_add_descriptor)
-        self._remove_desc_btn = QPushButton("Remove Last")
+        self._remove_desc_btn = QPushButton("Remove Selected")
         self._remove_desc_btn.clicked.connect(self._on_remove_descriptor)
         btn_row.addWidget(self._add_desc_btn)
         btn_row.addWidget(self._remove_desc_btn)
@@ -313,11 +318,16 @@ class CompanionsTab(QWidget):
         self._rebuild_descriptor_edits(active_descs)
 
     def _rebuild_descriptor_edits(self, active_descs):
-        """Rebuild the dynamic descriptor edit list to match data."""
+        """Rebuild the dynamic descriptor edit list and selection list to match data."""
         # Remove old edits
         for edit in self._descriptor_edits:
             edit.setParent(None)
         self._descriptor_edits.clear()
+
+        # Update the selectable list
+        self._desc_list.clear()
+        for i, desc in enumerate(active_descs):
+            self._desc_list.addItem(f"{i + 1}. {desc}")
 
         # Create one edit per active descriptor
         for i, desc in enumerate(active_descs):
@@ -350,14 +360,18 @@ class CompanionsTab(QWidget):
         self._rebuild_descriptor_edits(all_descs)
 
     def _on_remove_descriptor(self):
-        """Remove the last descriptor from the current companion."""
+        """Remove the selected descriptor from the current companion."""
         pet = self._current_companion()
         if pet is None:
             return
         descriptors = pet.get("Descriptors", [])
         if not descriptors:
             return
-        descriptors.pop()
+        # Remove selected index, or do nothing if nothing selected
+        selected_row = self._desc_list.currentRow()
+        if selected_row < 0 or selected_row >= len(descriptors):
+            return
+        descriptors.pop(selected_row)
         pet["Descriptors"] = descriptors
         pet["EggModified"] = True
         self._egg_modified_check.blockSignals(True)

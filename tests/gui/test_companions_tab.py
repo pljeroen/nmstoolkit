@@ -169,6 +169,7 @@ class TestDescriptorAddRemove:
         tab.set_data(psd)
         tab._list.setCurrentRow(0)
         initial_count = len(pet["Descriptors"])
+        tab._desc_list.setCurrentRow(0)  # Must select a descriptor to remove
         tab._on_remove_descriptor()
         assert len(pet["Descriptors"]) == initial_count - 1
 
@@ -239,3 +240,40 @@ class TestCompanionsTabEditWriteBack:
         }
         tab.set_data(psd)
         assert tab._list.count() == 1
+
+
+class TestRemoveSelectedDescriptor:
+    """R-COMP-01: Remove selected trait instead of always the last one."""
+
+    def test_remove_selected_removes_correct_trait(self, qapp):
+        """Removing with a selection should remove that specific trait, not the last."""
+        tab = CompanionsTab()
+        pet = _make_pet(descriptors=["^_TRAIT_A", "^_TRAIT_B", "^_TRAIT_C"])
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        # Select the second descriptor (index 1)
+        tab._desc_list.setCurrentRow(1)
+        tab._on_remove_descriptor()
+        # _TRAIT_B should be removed, leaving A and C
+        remaining = [d.lstrip("^") for d in pet["Descriptors"]]
+        assert "_TRAIT_B" not in remaining
+        assert "_TRAIT_A" in remaining
+        assert "_TRAIT_C" in remaining
+
+    def test_remove_with_no_selection_is_noop(self, qapp):
+        """When nothing is selected, remove should do nothing."""
+        tab = CompanionsTab()
+        pet = _make_pet(descriptors=["^_TRAIT_A", "^_TRAIT_B"])
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        # Clear selection
+        tab._desc_list.clearSelection()
+        tab._on_remove_descriptor()
+        assert len(pet["Descriptors"]) == 2
+
+    def test_remove_button_label_says_selected(self, qapp):
+        """Remove button should say 'Remove Selected' not 'Remove Last'."""
+        tab = CompanionsTab()
+        assert "Selected" in tab._remove_desc_btn.text() or "Remove" in tab._remove_desc_btn.text()

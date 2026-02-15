@@ -166,3 +166,63 @@ class TestFossilItemDetection:
         from nmstoolkit.gui.tabs.fossils_tab import is_fossil_base_object
 
         assert is_fossil_base_object("^WALL_A") is False
+
+
+class TestFossilFriendlyNames:
+    """R-FOSSIL-01: Fossil tab shows friendly names instead of raw IDs."""
+
+    def test_fossil_piece_shows_category(self):
+        """FOS_BI_BODY_AC should show 'Biped' category, not raw ID."""
+        from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
+
+        psd = {
+            "Inventory": {
+                "Slots": [
+                    {"Id": "^FOS_BI_BODY_AC", "Amount": 1, "Type": {"InventoryType": "Product"},
+                     "MaxAmount": 1, "DamageFactor": 0.0, "FullyInstalled": True,
+                     "Index": {"X": 0, "Y": 0}},
+                ],
+                "ValidSlotIndices": [{"X": 0, "Y": 0}],
+                "Class": {"InventoryClass": "C"},
+                "Width": 8, "Height": 6,
+            },
+        }
+        tab = FossilsTab()
+        tab.set_data(psd)
+        # Category column should show friendly name
+        category_text = tab._pieces_table.item(0, 1).text()
+        assert category_text == "Biped"
+
+    def test_procedural_fossil_shows_category(self):
+        """PROC_FOSS#11125 should show 'Fossil Sample' category."""
+        from nmstoolkit.gui.tabs.fossils_tab import _categorize_fossil
+
+        assert _categorize_fossil("^PROC_FOSS#11125") == "Fossil Sample"
+
+    def test_skull_trophy_shows_category(self):
+        """BLD_SKULL should show 'Titanic Trophy' category."""
+        from nmstoolkit.gui.tabs.fossils_tab import _categorize_fossil
+
+        assert _categorize_fossil("^BLD_SKULL") == "Titanic Trophy"
+
+    def test_fossil_item_column_shows_friendly_name(self):
+        """Item column in table should show friendly name, not just raw ID."""
+        from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
+
+        psd = {
+            "Inventory": {
+                "Slots": [
+                    {"Id": "^FOS_QUAD_BODY_AA", "Amount": 1, "Type": {"InventoryType": "Product"},
+                     "MaxAmount": 1, "DamageFactor": 0.0, "FullyInstalled": True,
+                     "Index": {"X": 0, "Y": 0}},
+                ],
+                "ValidSlotIndices": [{"X": 0, "Y": 0}],
+                "Class": {"InventoryClass": "C"},
+                "Width": 8, "Height": 6,
+            },
+        }
+        tab = FossilsTab()
+        tab.set_data(psd)
+        # First column should show a name, not just raw ID
+        item_text = tab._pieces_table.item(0, 0).text()
+        assert item_text != "FOS_QUAD_BODY_AA"  # Should have been resolved

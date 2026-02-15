@@ -73,6 +73,49 @@ def _categorize_fossil(item_id: str) -> str:
     return uid
 
 
+_FOSSIL_PART_NAMES = {
+    "BODY": "Body",
+    "HEAD": "Head",
+    "TAIL": "Tail",
+    "LIMBS": "Limbs",
+    "SKULL": "Skull",
+    "SPINE": "Spine",
+    "RIBS": "Ribs",
+    "PELVIS": "Pelvis",
+    "FEET": "Feet",
+    "CLAWS": "Claws",
+    "TEETH": "Teeth",
+    "HORN": "Horn",
+    "JAWS": "Jaws",
+}
+
+
+def _friendly_fossil_name(item_id: str) -> str:
+    """Convert a raw fossil ID to a friendly display name.
+
+    E.g. FOS_BI_BODY_AC → 'Biped Body (AC)'
+         PROC_FOSS#11125 → 'Fossil Sample #11125'
+         BLD_SKULL → 'Titanic Trophy'
+    """
+    uid = item_id.lstrip("^").upper()
+    # Handle procedural fossils
+    if uid.startswith("PROC_FOSS"):
+        suffix = item_id.split("#", 1)[1] if "#" in item_id else ""
+        return f"Fossil Sample #{suffix}" if suffix else "Fossil Sample"
+    if uid.startswith("BLD_SKULL"):
+        return "Titanic Trophy"
+    # FOS_<TYPE>_<PART>_<VARIANT> pattern
+    parts = uid.split("_")
+    if len(parts) >= 3 and parts[0] == "FOS":
+        category = _FOSSIL_CATEGORIES.get(f"FOS_{parts[1]}", parts[1].title())
+        part_name = _FOSSIL_PART_NAMES.get(parts[2], parts[2].title())
+        variant = parts[3] if len(parts) > 3 else ""
+        if variant:
+            return f"{category} {part_name} ({variant})"
+        return f"{category} {part_name}"
+    return _categorize_fossil(item_id)
+
+
 class FossilsTab(QWidget):
     """Tab showing fossil pieces across inventories and displays in bases."""
 
@@ -136,7 +179,8 @@ class FossilsTab(QWidget):
                 if item_id and is_fossil_item(item_id):
                     amount = slot.get("Amount", 0)
                     category = _categorize_fossil(item_id)
-                    rows.append((item_id.lstrip("^"), category, inv_label, amount))
+                    friendly = _friendly_fossil_name(item_id)
+                    rows.append((friendly, category, inv_label, amount))
 
         self._pieces_table.setRowCount(len(rows))
         for i, (item_id, category, location, amount) in enumerate(rows):
@@ -159,7 +203,8 @@ class FossilsTab(QWidget):
                 object_id = obj.get("ObjectID", "")
                 if object_id and is_fossil_base_object(object_id):
                     category = _categorize_fossil(object_id)
-                    rows.append((object_id.lstrip("^"), category, base_name))
+                    friendly = _friendly_fossil_name(object_id)
+                    rows.append((friendly, category, base_name))
 
         self._displays_table.setRowCount(len(rows))
         for i, (object_id, category, base_name) in enumerate(rows):

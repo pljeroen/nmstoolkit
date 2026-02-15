@@ -1,13 +1,17 @@
 """Bases & Storage editor tab."""
 
+import json
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -110,6 +114,14 @@ class BasesTab(QWidget):
         self._base_combo.setMinimumWidth(300)
         self._base_combo.currentIndexChanged.connect(self._on_base_selected)
         sel_layout.addWidget(self._base_combo)
+        self._export_btn = QPushButton("Export Base")
+        self._export_btn.clicked.connect(self._on_export)
+        sel_layout.addWidget(self._export_btn)
+
+        self._import_btn = QPushButton("Import Base")
+        self._import_btn.clicked.connect(self._on_import)
+        sel_layout.addWidget(self._import_btn)
+
         sel_layout.addStretch()
         top.addWidget(selector)
 
@@ -269,3 +281,50 @@ class BasesTab(QWidget):
             if combo_text.split(". ", 1)[-1] == clicked_name:
                 self._base_combo.setCurrentIndex(i)
                 break
+
+    def _get_export_data(self, index: int) -> dict:
+        """Get exportable data for base at given index."""
+        if index < 0 or index >= len(self._bases):
+            return {}
+        base = self._bases[index]
+        return {
+            "Name": base.get("Name", ""),
+            "BaseType": base.get("BaseType", {}),
+            "GalacticAddress": base.get("GalacticAddress", 0),
+            "Objects": base.get("Objects", []),
+        }
+
+    def _import_base_data(self, base_data: dict):
+        """Import a base dict into the player's base list."""
+        if self._data is None:
+            return
+        bases = self._data.get("PersistentPlayerBases", [])
+        bases.append(base_data)
+        self._data["PersistentPlayerBases"] = bases
+        # Refresh UI
+        self.set_data(self._data)
+
+    def _on_export(self):
+        """Export the currently selected base to a JSON file."""
+        index = self._base_combo.currentIndex()
+        data = self._get_export_data(index)
+        if not data:
+            return
+        name = data.get("Name", "base") or "base"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Base", f"{name}.json", "JSON files (*.json)"
+        )
+        if path:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+
+    def _on_import(self):
+        """Import a base from a JSON file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Base", "", "JSON files (*.json)"
+        )
+        if path:
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, dict) and "Objects" in data:
+                self._import_base_data(data)

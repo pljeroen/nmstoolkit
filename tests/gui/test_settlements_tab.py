@@ -377,3 +377,67 @@ class TestSettlementEmptyData:
         tab = SettlementsTab()
         tab.set_data(psd)
         assert tab._combo.count() == 1  # "No owned settlements found"
+
+
+class TestSettlementPerks:
+    """R-SET-06: Settlement perks selectable via dropdown and add/removable."""
+
+    def test_perk_list_displayed(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD", perks=["^STARTING_NEG1", "^GIFT_PROD1"])
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert tab._perk_list.count() == 2
+
+    def test_perk_add(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD", perks=["^STARTING_NEG1"])
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        # Select a perk from the dropdown and add it
+        tab._perk_combo.setCurrentIndex(0)
+        tab._on_add_perk()
+        assert len(settlement["Perks"]) == 2
+
+    def test_perk_remove_selected(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD", perks=["^STARTING_NEG1", "^GIFT_PROD1"])
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        tab._perk_list.setCurrentRow(0)
+        tab._on_remove_perk()
+        assert len(settlement["Perks"]) == 1
+
+    def test_perk_names_resolved(self):
+        """Perks should show human-readable names from settlements.json."""
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD", perks=["^STARTING_NEG1"])
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        # The perk list item should show a name, not just the ID
+        text = tab._perk_list.item(0).text()
+        assert text != "^STARTING_NEG1"  # Should be resolved to friendly name
