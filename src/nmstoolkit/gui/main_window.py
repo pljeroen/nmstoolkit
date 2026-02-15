@@ -44,6 +44,7 @@ from nmstoolkit.gui.tabs.expedition_tab import ExpeditionTab
 from nmstoolkit.gui.tabs.account_tab import AccountTab
 from nmstoolkit.gui.tabs.recipe_finder_tab import RecipeFinderTab
 from nmstoolkit.gui.tabs.fish_finder_tab import FishFinderTab
+from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 KEY_MAP_PATH = DATA_DIR / "jsonmap.txt"
@@ -204,6 +205,7 @@ class MainWindow(QMainWindow):
         self._account_tab = AccountTab()
         self._recipe_finder_tab = RecipeFinderTab()
         self._fish_finder_tab = FishFinderTab()
+        self._fossils_tab = FossilsTab()
 
         self._tabs.addTab(self._exosuit_tab, "Exosuit")
         self._tabs.addTab(self._ships_tab, "Ships")
@@ -215,6 +217,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._vehicles_tab, "Vehicles")
         self._tabs.addTab(self._companions_tab, "Companions")
         self._tabs.addTab(self._bases_tab, "Bases & Storage")
+        self._tabs.addTab(self._fossils_tab, "Fossils")
         self._tabs.addTab(self._settlements_tab, "Settlements")
         self._tabs.addTab(self._discoveries_tab, "Discovery")
         self._tabs.addTab(self._milestones_tab, "Milestones")
@@ -814,6 +817,7 @@ class MainWindow(QMainWindow):
         self._vehicles_tab.set_data(psd)
         self._companions_tab.set_data(psd)
         self._bases_tab.set_data(psd)
+        self._fossils_tab.set_data(psd)
         self._settlements_tab.set_data(psd)
         self._discoveries_tab.set_data(sf.data.get("DiscoveryManagerData", {}))
         self._milestones_tab.set_data(psd)
