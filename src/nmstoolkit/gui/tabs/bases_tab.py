@@ -1,17 +1,43 @@
 """Bases & Storage editor tab."""
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
+
+# Object IDs that count as electrical wires
+_WIRE_IDS = {"U_POWERLINE"}
+
+# NMS hard limits
+_SAVE_PART_LIMIT = 16000
+_BASE_PART_LIMIT = 3000
+_BASE_LIMIT = 400
+
+
+class _NumericTableItem(QTableWidgetItem):
+    """Table item that sorts numerically instead of lexicographically."""
+
+    def __init__(self, value: int):
+        super().__init__(str(value))
+        self._value = value
+        self.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def __lt__(self, other):
+        if isinstance(other, _NumericTableItem):
+            return self._value < other._value
+        return super().__lt__(other)
 
 
 def _decode_galactic_address(addr) -> str:
@@ -100,9 +126,29 @@ class BasesTab(QWidget):
         det_layout.addRow("Address:", self._address_label)
         self._parts_label = QLabel("—")
         det_layout.addRow("Parts:", self._parts_label)
-        self._total_parts_label = QLabel("—")
-        det_layout.addRow("Total (all bases):", self._total_parts_label)
         layout.addWidget(details)
+
+        # Base part budget table
+        budget_group = QGroupBox("Base Part Budget")
+        budget_layout = QVBoxLayout(budget_group)
+
+        self._total_parts_label = QLabel("—")
+        self._total_parts_label.setStyleSheet("font-weight: bold;")
+        budget_layout.addWidget(self._total_parts_label)
+
+        self._budget_table = QTableWidget(0, 3)
+        self._budget_table.setHorizontalHeaderLabels(["Base Name", "Parts", "Wires"])
+        self._budget_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._budget_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._budget_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._budget_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._budget_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._budget_table.setSortingEnabled(True)
+        self._budget_table.setAlternatingRowColors(True)
+        self._budget_table.currentCellChanged.connect(self._on_budget_row_clicked)
+        budget_layout.addWidget(self._budget_table)
+
+        layout.addWidget(budget_group)
 
         # Storage chests (universal — not per-base)
         storage_label = QLabel("Global Storage (accessible from any base/freighter)")
@@ -134,15 +180,42 @@ class BasesTab(QWidget):
             self._base_combo.addItem(f"{i + 1}. {name}")
         self._base_combo.blockSignals(False)
 
-        # Compute total parts across all bases
+        # Populate budget table
+        self._budget_table.setSortingEnabled(False)
+        self._budget_table.setRowCount(len(self._bases))
         total_parts = 0
-        for base in self._bases:
+        total_wires = 0
+        for row, base in enumerate(self._bases):
+            name = base.get("Name", "")
+            if not name:
+                base_type = base.get("BaseType", {})
+                if isinstance(base_type, dict):
+                    name = base_type.get("PersistentBaseTypes", "")
+                if not name:
+                    name = f"Base {row + 1}"
+
             objects = base.get("Objects", [])
-            if isinstance(objects, list):
-                total_parts += len(objects)
-        # NMS save limit is ~16,000 base parts total (across all bases)
-        limit_pct = f" ({total_parts / 16000 * 100:.1f}% of ~16K limit)" if total_parts > 0 else ""
-        self._total_parts_label.setText(f"{total_parts:,} parts{limit_pct}")
+            part_count = len(objects) if isinstance(objects, list) else 0
+            wire_count = sum(
+                1 for o in (objects if isinstance(objects, list) else [])
+                if o.get("ObjectID", "").lstrip("^") in _WIRE_IDS
+            )
+            total_parts += part_count
+            total_wires += wire_count
+
+            name_item = QTableWidgetItem(name)
+            self._budget_table.setItem(row, 0, name_item)
+            self._budget_table.setItem(row, 1, _NumericTableItem(part_count))
+            self._budget_table.setItem(row, 2, _NumericTableItem(wire_count))
+
+        self._budget_table.setSortingEnabled(True)
+
+        limit_pct = total_parts / _SAVE_PART_LIMIT * 100
+        self._total_parts_label.setText(
+            f"Total: {total_parts:,} / {_SAVE_PART_LIMIT:,} parts ({limit_pct:.1f}%), "
+            f"{total_wires:,} wires, "
+            f"{len(self._bases)} / {_BASE_LIMIT} bases"
+        )
 
         if self._bases:
             self._base_combo.setCurrentIndex(0)
@@ -173,4 +246,26 @@ class BasesTab(QWidget):
 
         # Parts count
         objects = base.get("Objects", [])
-        self._parts_label.setText(str(len(objects)) if isinstance(objects, list) else "—")
+        part_count = len(objects) if isinstance(objects, list) else 0
+        wire_count = sum(
+            1 for o in (objects if isinstance(objects, list) else [])
+            if o.get("ObjectID", "").lstrip("^") in _WIRE_IDS
+        )
+        limit_pct = f" ({part_count / _BASE_PART_LIMIT * 100:.0f}% of {_BASE_PART_LIMIT:,} limit)" if part_count > 0 else ""
+        self._parts_label.setText(f"{part_count:,} parts, {wire_count:,} wires{limit_pct}")
+
+    def _on_budget_row_clicked(self, row, _col, _prev_row, _prev_col):
+        """Sync budget table click with base selector combo."""
+        if row < 0:
+            return
+        # The budget table rows may be sorted, so find the base name and match
+        name_item = self._budget_table.item(row, 0)
+        if name_item is None:
+            return
+        clicked_name = name_item.text()
+        for i in range(self._base_combo.count()):
+            combo_text = self._base_combo.itemText(i)
+            # Combo text is "N. BaseName"
+            if combo_text.split(". ", 1)[-1] == clicked_name:
+                self._base_combo.setCurrentIndex(i)
+                break
