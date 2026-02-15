@@ -106,6 +106,10 @@ class SlotEditor(QDialog):
         self.installed_check = QCheckBox("Fully Installed")
         form.addRow("", self.installed_check)
 
+        # Supercharged
+        self.supercharged_check = QCheckBox("Supercharged")
+        form.addRow("", self.supercharged_check)
+
         layout.addLayout(form)
 
         # Buttons
@@ -145,6 +149,15 @@ class SlotEditor(QDialog):
         self.damage_spin.setValue(self._slot.get("DamageFactor", 0.0))
         self.installed_check.setChecked(self._slot.get("FullyInstalled", True))
 
+        # Check if this slot position is in SpecialSlots
+        sx = self._slot.get("Index", {}).get("X", -1)
+        sy = self._slot.get("Index", {}).get("Y", -1)
+        is_special = any(
+            s.get("Index", {}).get("X") == sx and s.get("Index", {}).get("Y") == sy
+            for s in self._inventory.get("SpecialSlots", [])
+        )
+        self.supercharged_check.setChecked(is_special)
+
     def _on_item_changed(self, index):
         item_data = self.item_combo.itemData(index)
         if item_data is not None:
@@ -177,6 +190,25 @@ class SlotEditor(QDialog):
         self._slot["MaxAmount"] = self.max_amount_spin.value()
         self._slot["DamageFactor"] = self.damage_spin.value()
         self._slot["FullyInstalled"] = self.installed_check.isChecked()
+
+        # Update SpecialSlots based on supercharged checkbox
+        sx = self._slot.get("Index", {}).get("X", -1)
+        sy = self._slot.get("Index", {}).get("Y", -1)
+        special_slots = self._inventory.setdefault("SpecialSlots", [])
+        already_special = any(
+            s.get("Index", {}).get("X") == sx and s.get("Index", {}).get("Y") == sy
+            for s in special_slots
+        )
+        if self.supercharged_check.isChecked() and not already_special:
+            special_slots.append({
+                "Type": {"InventorySpecialSlotType": "TechBonus"},
+                "Index": {"X": sx, "Y": sy},
+            })
+        elif not self.supercharged_check.isChecked() and already_special:
+            self._inventory["SpecialSlots"] = [
+                s for s in special_slots
+                if not (s.get("Index", {}).get("X") == sx and s.get("Index", {}).get("Y") == sy)
+            ]
 
     def clear_slot(self):
         """Reset the slot to empty."""

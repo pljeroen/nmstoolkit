@@ -46,6 +46,7 @@ jobs:
             --hidden-import nmstoolkit.gui.tabs.recipe_finder_tab ^
             --hidden-import nmstoolkit.gui.tabs.fish_finder_tab ^
             --hidden-import nmstoolkit.gui.tabs.json_editor_tab ^
+            --hidden-import PySide6.QtOpenGLWidgets ^
             src\nmstoolkit\app.py
 
       - name: Upload artifact
@@ -69,4 +70,4 @@ jobs:
           files: nmstoolkit.exe
           generate_release_notes: true
           prerelease: true
-          name: "v${{ github.ref_name }} (beta)"
+          name: "${{ github.ref_name }} (beta)"

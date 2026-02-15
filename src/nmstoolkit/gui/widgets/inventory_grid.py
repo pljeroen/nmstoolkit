@@ -31,6 +31,7 @@ _TYPE_COLORS = {
 }
 _EMPTY_COLORS = ("#2a2a2e", "#555")
 _LOCKED_COLORS = ("#1a1a1e", "#333")
+_SPECIAL_BORDER = "#dd2"  # Gold — supercharged slot accent
 
 _MIME_TYPE = "application/x-nms-slot-pos"
 
@@ -234,24 +235,25 @@ def _create_placeholder_pixmap(
     return pixmap
 
 
-def _make_slot_style(bg: str, border: str, left_accent: str = "") -> str:
+def _make_slot_style(
+    bg: str, border: str, left_accent: str = "", special: bool = False,
+) -> str:
     """Build a stylesheet string for a slot widget."""
-    if left_accent:
-        return (
-            f"background: qlineargradient("
-            f"x1:0, y1:0, x2:1, y2:1, "
-            f"stop:0 {bg}, stop:1 {_darken(bg)});"
-            f"border: 1px solid {border};"
-            f"border-left: 3px solid {left_accent};"
-            f"border-radius: 3px;"
-        )
-    return (
+    style = (
         f"background: qlineargradient("
         f"x1:0, y1:0, x2:1, y2:1, "
         f"stop:0 {bg}, stop:1 {_darken(bg)});"
         f"border: 1px solid {border};"
         f"border-radius: 3px;"
     )
+    if special:
+        style += (
+            f"border-left: 3px solid {_SPECIAL_BORDER};"
+            f"border-top: 3px solid {_SPECIAL_BORDER};"
+        )
+    elif left_accent:
+        style += f"border-left: 3px solid {left_accent};"
+    return style
 
 
 def _darken(hex_color: str) -> str:
@@ -280,12 +282,13 @@ class SlotWidget(QWidget):
     clicked = Signal(int, int)  # x, y coordinates
     right_clicked = Signal(int, int)  # x, y coordinates
 
-    def __init__(self, index: int, locked: bool = False, x: int = 0, y: int = 0):
+    def __init__(self, index: int, locked: bool = False, x: int = 0, y: int = 0, special: bool = False):
         super().__init__()
         self._index = index
         self._locked = locked
         self._x = x
         self._y = y
+        self._special = special
         self._inv_type = ""
         self._drag_start_pos = None
         self._drag_started = False
@@ -323,10 +326,10 @@ class SlotWidget(QWidget):
             self.setStyleSheet(_make_slot_style(bg, border))
         elif self._inv_type:
             bg, border = _get_type_colors(self._inv_type)
-            self.setStyleSheet(_make_slot_style(bg, border, left_accent=border))
+            self.setStyleSheet(_make_slot_style(bg, border, left_accent=border, special=self._special))
         else:
             bg, border = _EMPTY_COLORS
-            self.setStyleSheet(_make_slot_style(bg, border))
+            self.setStyleSheet(_make_slot_style(bg, border, special=self._special))
 
     @property
     def is_locked(self) -> bool:
@@ -552,6 +555,9 @@ class InventoryGrid(QWidget):
         valid_indices = inventory.get("ValidSlotIndices", [])
         valid_set = {(v["X"], v["Y"]) for v in valid_indices}
 
+        special_slots = inventory.get("SpecialSlots", [])
+        special_set = {(s["Index"]["X"], s["Index"]["Y"]) for s in special_slots}
+
         # If the inventory is essentially empty (no valid slots, no slot data,
         # and no meaningful dimensions), show a message instead of dark grid
         slots_data = inventory.get("Slots", [])
@@ -577,7 +583,8 @@ class InventoryGrid(QWidget):
                 locked = pos not in valid_set
                 flat_index = y * width + x
 
-                widget = SlotWidget(flat_index, locked=locked, x=x, y=y)
+                is_special = pos in special_set
+                widget = SlotWidget(flat_index, locked=locked, x=x, y=y, special=is_special)
                 widget._grid = self
 
                 if not locked and pos in slots_by_pos:
@@ -720,6 +727,11 @@ class InventoryGrid(QWidget):
 
             menu.addSeparator()
 
+            is_special = widget._special
+            sc_label = "Remove Supercharged" if is_special else "Set Supercharged"
+            sc_action = menu.addAction(sc_label)
+            sc_action.triggered.connect(lambda: self.toggle_special(x, y))
+
             disable_action = menu.addAction("Disable Slot")
             disable_action.triggered.connect(lambda: self.disable_slot(x, y))
         else:
@@ -729,6 +741,16 @@ class InventoryGrid(QWidget):
         menu.addSeparator()
         enable_all_action = menu.addAction("Enable All Slots")
         enable_all_action.triggered.connect(self.enable_all_slots)
+
+        # Optimizer (only if there are tech items)
+        has_tech = any(
+            s.get("Type", {}).get("InventoryType") == "Technology" and s.get("Id")
+            for s in (self._inventory or {}).get("Slots", [])
+        )
+        if has_tech:
+            menu.addSeparator()
+            opt_action = menu.addAction("Optimize Tech Layout")
+            opt_action.triggered.connect(self._optimize_layout)
 
         menu.exec(widget.mapToGlobal(widget.rect().center()))
 
@@ -788,7 +810,7 @@ class InventoryGrid(QWidget):
             return
 
         if not self._is_valid(x, y):
-            self._inventory["ValidSlotIndices"].append({"X": x, "Y": y})
+            self._inventory.setdefault("ValidSlotIndices", []).append({"X": x, "Y": y})
 
         if self._find_slot_data(x, y) is None:
             self._inventory["Slots"].append(_make_empty_slot(x, y))
@@ -818,6 +840,53 @@ class InventoryGrid(QWidget):
         widget = self._slot_widgets.get((x, y))
         if widget is not None:
             widget.is_locked = True
+
+    def toggle_special(self, x: int, y: int):
+        """Toggle supercharged status on a slot."""
+        if self._inventory is None:
+            return
+        if not self._is_valid(x, y):
+            return
+
+        special_slots = self._inventory.setdefault("SpecialSlots", [])
+        # Check if already special
+        for i, s in enumerate(special_slots):
+            idx = s.get("Index", {})
+            if idx.get("X") == x and idx.get("Y") == y:
+                special_slots.pop(i)
+                widget = self._slot_widgets.get((x, y))
+                if widget is not None:
+                    widget._special = False
+                    widget._apply_style()
+                return
+
+        # Add as special
+        special_slots.append({
+            "Type": {"InventorySpecialSlotType": "TechBonus"},
+            "Index": {"X": x, "Y": y},
+        })
+        widget = self._slot_widgets.get((x, y))
+        if widget is not None:
+            widget._special = True
+            widget._apply_style()
+
+    def _optimize_layout(self):
+        """Run the tech layout optimizer on the current inventory."""
+        if self._inventory is None:
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Optimize Tech Layout",
+            "Rearrange technology items for maximum adjacency bonuses?\n\n"
+            "Non-tech items will not be moved.",
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        from nmstoolkit.gui.widgets.slot_optimizer import optimize_tech_layout
+        optimize_tech_layout(self._inventory, _CATALOGUE)
+        self.set_inventory(self._inventory)
 
     def enable_all_slots(self):
         """Enable every position in the grid."""

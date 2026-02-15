@@ -3,6 +3,7 @@
 from collections import Counter
 from typing import Dict, List, Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -11,6 +12,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -21,8 +24,8 @@ from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 # Module category mapping from ID prefix to human-readable category.
 _MODULE_CATEGORIES = {
     "B_COK": "Cockpit",
-    "B_HAB": "Habitation",
     "B_HAB1": "Access Module",
+    "B_HAB": "Habitation",
     "B_WNG": "Wing",
     "B_STR": "Structure",
     "B_CON_L": "Large Connector",
@@ -169,10 +172,32 @@ class CorvetteTab(QWidget):
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
         self._inv_draft = InventoryGrid("Build Grid")
+
+        # Build Grid tab: stacked 2D/3D with toggle button
+        self._draft_container = QWidget()
+        draft_layout = QVBoxLayout(self._draft_container)
+        draft_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._view_toggle_btn = QPushButton("Switch to 3D View")
+        self._view_toggle_btn.setFixedHeight(28)
+        self._view_toggle_btn.clicked.connect(self._toggle_draft_view)
+        draft_layout.addWidget(self._view_toggle_btn)
+
+        self._draft_stack = QStackedWidget()
+        self._draft_stack.addWidget(self._inv_draft)  # index 0 = 2D
+
+        # Lazy-create 3D view only when toggled (avoids GL init on startup)
+        self._3d_view = None
+        self._3d_placeholder = QLabel("Loading 3D view...")
+        self._3d_placeholder.setAlignment(Qt.AlignCenter)
+        self._draft_stack.addWidget(self._3d_placeholder)  # index 1 = 3D placeholder
+
+        draft_layout.addWidget(self._draft_stack)
+
         self._inv_tabs.addTab(self._inv_general, "General")
         self._inv_tabs.addTab(self._inv_tech, "Technology")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
-        self._inv_tabs.addTab(self._inv_draft, "Build Grid")
+        self._inv_tabs.addTab(self._draft_container, "Build Grid")
         layout.addWidget(self._inv_tabs)
 
     def set_data(self, psd: dict):
@@ -221,6 +246,37 @@ class CorvetteTab(QWidget):
         if self._corvette_combo.count() > 0:
             self._corvette_combo.setCurrentIndex(0)
             self._on_corvette_selected(0)
+
+    def _toggle_draft_view(self):
+        """Toggle between 2D and 3D views for the build grid."""
+        current = self._draft_stack.currentIndex()
+        if current == 0:
+            # Switch to 3D
+            if self._3d_view is None:
+                try:
+                    from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+                    self._3d_view = Corvette3DView()
+                    self._draft_stack.removeWidget(self._3d_placeholder)
+                    self._3d_placeholder.deleteLater()
+                    self._3d_placeholder = None
+                    self._draft_stack.addWidget(self._3d_view)
+                except Exception as exc:
+                    # OpenGL not available — show error and stay on 2D
+                    if self._3d_placeholder is not None:
+                        self._3d_placeholder.setText(
+                            f"3D view unavailable: {exc}"
+                        )
+                    return
+            # Feed current draft data to 3D view
+            if self._data is not None:
+                draft_inv = self._data.get("CorvetteStorageInventory", {})
+                self._3d_view.set_modules(draft_inv)
+            self._draft_stack.setCurrentIndex(1)
+            self._view_toggle_btn.setText("Switch to 2D Grid")
+        else:
+            # Switch to 2D
+            self._draft_stack.setCurrentIndex(0)
+            self._view_toggle_btn.setText("Switch to 3D View")
 
     def _on_corvette_selected(self, index):
         if index < 0:
@@ -316,6 +372,10 @@ class CorvetteTab(QWidget):
         self._inv_tabs.setCurrentIndex(3)
 
         self._inv_draft.set_inventory(draft_inv)
+
+        # Update 3D view if it exists
+        if self._3d_view is not None:
+            self._3d_view.set_modules(draft_inv)
 
         # Module summary from draft
         slots = draft_inv.get("Slots", [])

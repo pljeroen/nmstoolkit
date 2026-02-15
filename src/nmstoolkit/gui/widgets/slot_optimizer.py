@@ -1,0 +1,227 @@
+"""Slot optimizer — rearranges technology items for maximum adjacency bonuses.
+
+NMS adjacency bonus: same-type technologies placed next to each other
+(up/down/left/right) receive a ~10% stacking bonus. Supercharged slots
+give an additional multiplier.
+
+This module provides a pure function that modifies an inventory dict in-place.
+"""
+
+from __future__ import annotations
+
+import copy
+from collections import defaultdict
+from typing import Dict, List, Optional, Set, Tuple
+
+
+def _get_tech_category(item_id: str, catalogue) -> str:
+    """Determine the technology category/group for adjacency purposes.
+
+    Uses catalogue lookup first, falls back to ID prefix grouping.
+    """
+    if not item_id:
+        return ""
+
+    # Try catalogue lookup
+    if catalogue is not None:
+        item = catalogue.find_item(item_id)
+        if item is not None:
+            cat = item.get("category", "")
+            if cat:
+                return cat
+
+        # Strip procedural suffix and retry
+        if "#" in item_id:
+            base = item_id.split("#")[0]
+            item = catalogue.find_item(base)
+            if item is not None:
+                cat = item.get("category", "")
+                if cat:
+                    return cat
+
+    # Fallback: group by ID prefix (strip ^ and procedural suffix)
+    uid = item_id.lstrip("^").split("#")[0]
+
+    # Common prefix groupings for NMS upgrades
+    prefixes = [
+        "UP_LASER", "UP_SCAN", "UP_BOLT", "UP_GREN", "UP_RAIL", "UP_SHOT",
+        "UP_SMG", "UP_CANN", "UP_SENGUN",
+        "UP_SHLD", "UP_ENGY", "UP_JET", "UP_HAZ",
+        "UP_HOT", "UP_COLD", "UP_TOX", "UP_RAD", "UP_UNW",
+        "UA_PULSE", "UA_LAUN", "UA_HYP", "UA_SGUN",
+        "UA_PHOTON", "UA_PHASE", "UA_ROCKET", "UA_SHIELD",
+        "UP_PULSE", "UP_LAUN", "UP_HYP", "UP_SGUN",
+        "UP_PHOTON", "UP_PHASE", "UP_ROCKET", "UP_SHIELD",
+        "UP_FREIG", "UP_FRHYP", "UP_FRSCAN",
+    ]
+    for prefix in prefixes:
+        if uid.upper().startswith(prefix):
+            return prefix
+
+    # Generic prefix: first two segments
+    parts = uid.split("_")
+    if len(parts) >= 2:
+        return f"{parts[0]}_{parts[1]}"
+    return uid
+
+
+def _neighbors(x: int, y: int) -> List[Tuple[int, int]]:
+    """Return 4-directional neighbors."""
+    return [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+
+
+def _score_placement(
+    positions: Dict[str, List[Tuple[int, int]]],
+    special_set: Set[Tuple[int, int]],
+) -> int:
+    """Score a placement based on adjacency pairs and supercharged positions.
+
+    Each adjacent pair of same-group techs = 1 point.
+    Each tech on a supercharged slot = 3 bonus points.
+    """
+    score = 0
+    all_positions: Dict[Tuple[int, int], str] = {}
+    for group, pos_list in positions.items():
+        for pos in pos_list:
+            all_positions[pos] = group
+
+    for pos, group in all_positions.items():
+        for nx, ny in _neighbors(pos[0], pos[1]):
+            if all_positions.get((nx, ny)) == group:
+                score += 1  # counted twice (both directions) but consistent
+        if pos in special_set:
+            score += 3
+
+    return score
+
+
+def optimize_tech_layout(inventory: dict, catalogue=None) -> None:
+    """Rearrange technology items in inventory for maximum adjacency bonuses.
+
+    Modifies the inventory dict in-place. Non-tech items are not moved.
+    """
+    slots = inventory.get("Slots", [])
+    valid_indices = inventory.get("ValidSlotIndices", [])
+    valid_set = {(v["X"], v["Y"]) for v in valid_indices}
+    special_slots = inventory.get("SpecialSlots", [])
+    special_set = {(s["Index"]["X"], s["Index"]["Y"]) for s in special_slots}
+
+    # Separate tech and non-tech slots
+    tech_slots = []
+    non_tech_positions: Set[Tuple[int, int]] = set()
+
+    for slot in slots:
+        inv_type = slot.get("Type", {}).get("InventoryType", "")
+        item_id = slot.get("Id", "")
+        pos = (slot["Index"]["X"], slot["Index"]["Y"])
+
+        if inv_type == "Technology" and item_id:
+            tech_slots.append(slot)
+        elif item_id:
+            non_tech_positions.add(pos)
+
+    if not tech_slots:
+        return
+
+    # Group techs by category
+    groups: Dict[str, List[dict]] = defaultdict(list)
+    for slot in tech_slots:
+        cat = _get_tech_category(slot["Id"], catalogue)
+        groups[cat].append(slot)
+
+    # Available positions: valid, not occupied by non-tech items
+    available = sorted(valid_set - non_tech_positions)
+    if len(available) < len(tech_slots):
+        return  # Can't fit all techs, don't optimize
+
+    # Greedy placement: place largest groups first, starting from supercharged slots
+    # Sort groups by size (largest first)
+    sorted_groups = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+
+    placed: Dict[str, List[Tuple[int, int]]] = {}
+    used: Set[Tuple[int, int]] = set()
+
+    for group_name, group_slots in sorted_groups:
+        needed = len(group_slots)
+
+        # Find best starting position: prefer supercharged slots
+        best_cluster = None
+        best_score = -1
+
+        # Try each available position as start, expand via BFS for this group
+        candidates = [p for p in available if p not in used]
+        supercharged_candidates = [p for p in candidates if p in special_set]
+        start_candidates = supercharged_candidates + candidates
+
+        for start in start_candidates[:20]:  # Limit search for performance
+            # BFS: expand from start to fill group_size positions
+            cluster = _bfs_cluster(start, needed, available, used)
+            if len(cluster) < needed:
+                continue
+
+            # Score this placement
+            test_placement = dict(placed)
+            test_placement[group_name] = cluster
+            score = _score_placement(test_placement, special_set)
+
+            if score > best_score:
+                best_score = score
+                best_cluster = cluster
+
+        if best_cluster is None:
+            # Fallback: take any available positions (may not be contiguous)
+            fallback = [p for p in available if p not in used]
+            if len(fallback) < needed:
+                return  # Cannot place all techs safely — abort optimization
+            best_cluster = fallback[:needed]
+
+        # Assign positions to slots
+        for i, slot in enumerate(group_slots):
+            pos = best_cluster[i]
+            slot["Index"]["X"] = pos[0]
+            slot["Index"]["Y"] = pos[1]
+            used.add(pos)
+        placed[group_name] = best_cluster
+
+    # Rebuild Slots list: non-tech slots unchanged, tech slots with new positions
+    new_slots = []
+    for slot in slots:
+        inv_type = slot.get("Type", {}).get("InventoryType", "")
+        item_id = slot.get("Id", "")
+        if inv_type == "Technology" and item_id:
+            continue  # Will be re-added with new positions
+        new_slots.append(slot)
+
+    new_slots.extend(tech_slots)
+    inventory["Slots"] = new_slots
+
+
+def _bfs_cluster(
+    start: Tuple[int, int],
+    size: int,
+    available: list,
+    used: Set[Tuple[int, int]],
+) -> List[Tuple[int, int]]:
+    """BFS expand from start position to find a connected cluster of given size."""
+    available_set = set(available) - used
+    if start not in available_set:
+        return []
+
+    cluster = [start]
+    visited = {start}
+    queue = [start]
+    qi = 0
+
+    while qi < len(queue) and len(cluster) < size:
+        pos = queue[qi]
+        qi += 1
+        for nx, ny in _neighbors(pos[0], pos[1]):
+            npos = (nx, ny)
+            if npos in available_set and npos not in visited:
+                visited.add(npos)
+                cluster.append(npos)
+                queue.append(npos)
+                if len(cluster) >= size:
+                    break
+
+    return cluster[:size]
