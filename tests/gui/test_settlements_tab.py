@@ -218,6 +218,143 @@ class TestSettlementStatsDisplay:
         assert settlement["Population"] == 200
 
 
+class TestSettlementProductionDisplay:
+    """R-SET-04: Production state displayed and editable."""
+
+    def test_production_items_displayed(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["ProductionState"] = [
+            {"ElementId": "^FUEL1", "Amount": 100, "Cap": 500, "RateMultiplier": 1.5},
+            {"ElementId": "^TECH_COMP", "Amount": 50, "Cap": 200, "RateMultiplier": 0.75},
+        ]
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        # Should have 2 production rows
+        assert len(tab._prod_rows) == 2
+        assert tab._prod_rows[0]["amount"].value() == 100
+        assert tab._prod_rows[1]["amount"].value() == 50
+
+    def test_production_amount_writeback(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["ProductionState"] = [
+            {"ElementId": "^FUEL1", "Amount": 100, "Cap": 500, "RateMultiplier": 1.0},
+        ]
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        tab._prod_rows[0]["amount"].setValue(250)
+        assert settlement["ProductionState"][0]["Amount"] == 250
+
+    def test_production_cap_writeback(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["ProductionState"] = [
+            {"ElementId": "^FUEL1", "Amount": 100, "Cap": 500, "RateMultiplier": 1.0},
+        ]
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        tab._prod_rows[0]["cap"].setValue(999)
+        assert settlement["ProductionState"][0]["Cap"] == 999
+
+    def test_production_rate_writeback(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["ProductionState"] = [
+            {"ElementId": "^FUEL1", "Amount": 100, "Cap": 500, "RateMultiplier": 1.0},
+        ]
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        tab._prod_rows[0]["rate"].setValue(2.5)
+        assert abs(settlement["ProductionState"][0]["RateMultiplier"] - 2.5) < 0.01
+
+    def test_empty_production_state(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        # No ProductionState key
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert len(tab._prod_rows) == 0
+
+
+class TestSettlementQOL:
+    """R-SET-05: Race, address, and building count displayed."""
+
+    def test_race_displayed(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["Race"] = {"AlienRace": "Korvax"}
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert tab._race_label.text() == "Korvax"
+
+    def test_address_displayed(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["UniverseAddress"] = 0x0001000200030004
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert tab._address_label.text() != "—"
+
+    def test_building_count_displayed(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        # 41 non-zero out of 48
+        settlement["BuildingStates"] = [1] * 41 + [0] * 7
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert "41" in tab._buildings_label.text()
+        assert "48" in tab._buildings_label.text()
+
+
 class TestSettlementEmptyData:
     """Edge cases: no data, no settlements, empty PSD."""
 

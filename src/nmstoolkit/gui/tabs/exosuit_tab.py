@@ -1,6 +1,7 @@
 """Exosuit editor tab — inventory grids, currencies, health/shield/energy."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRegularExpression, Qt
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
+
+_UINT32_MAX = 4_294_967_295
 
 
 class ExosuitTab(QWidget):
@@ -35,9 +38,11 @@ class ExosuitTab(QWidget):
         # Currencies
         curr_group = QGroupBox("Currencies")
         curr_layout = QFormLayout(curr_group)
-        self._units = QSpinBox()
-        self._units.setRange(0, 2_147_483_647)
-        self._units.valueChanged.connect(lambda v: self._set_value("Units", v))
+
+        # Units: QLineEdit with validator for unsigned 32-bit range (0 to 4,294,967,295)
+        self._units = QLineEdit()
+        self._units.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,10}")))
+        self._units.editingFinished.connect(self._on_units_changed)
         curr_layout.addRow("Units:", self._units)
 
         self._nanites = QSpinBox()
@@ -85,17 +90,24 @@ class ExosuitTab(QWidget):
         self._data = psd
 
         # Block signals during population
-        for w in (self._units, self._nanites, self._quicksilver):
+        for w in (self._nanites, self._quicksilver):
             w.blockSignals(True)
 
-        # Units may overflow to negative in save; clamp to 0
+        # Units: treat negative save values as unsigned (add 2^32)
         units = psd.get("Units", 0)
-        self._units.setValue(max(0, units) if isinstance(units, int) else 0)
+        if isinstance(units, int):
+            if units < 0:
+                units = units + (1 << 32)
+            units = max(0, min(units, _UINT32_MAX))
+        else:
+            units = 0
+        self._units.setText(str(units))
+
         self._nanites.setValue(psd.get("Nanites", 0))
         # Quicksilver is stored as "Specials" in NMS save format
         self._quicksilver.setValue(psd.get("Specials", 0))
 
-        for w in (self._units, self._nanites, self._quicksilver):
+        for w in (self._nanites, self._quicksilver):
             w.blockSignals(False)
 
         self._health.set_value(psd.get("Health", 0))
@@ -105,6 +117,16 @@ class ExosuitTab(QWidget):
         self._inv_general.set_inventory(psd.get("Inventory", {}))
         self._inv_tech.set_inventory(psd.get("Inventory_TechOnly", {}))
         self._inv_cargo.set_inventory(psd.get("Inventory_Cargo", {}))
+
+    def _on_units_changed(self):
+        if self._data is None:
+            return
+        text = self._units.text().strip()
+        try:
+            value = int(text)
+        except (ValueError, TypeError):
+            value = 0
+        self._data["Units"] = max(0, min(value, _UINT32_MAX))
 
     def _set_value(self, key: str, value):
         if self._data is not None:

@@ -122,6 +122,76 @@ class TestExpeditionRewardFilter:
         assert tab._rewards_table.rowCount() == 2
 
 
+class TestTwitchRewards:
+    """R-EXP-05: Twitch rewards consolidated on expedition tab."""
+
+    def test_twitch_rewards_table_populated(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedTwitchRewards": [
+                "^YOURSHIP_TRAIL",
+                "^YOURSUIT_JETTRAIL",
+                "^BLD_POSTER",
+            ],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._twitch_table.rowCount() == 3
+
+    def test_twitch_rewards_names_resolved(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedTwitchRewards": ["^YOURSHIP_TRAIL"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._twitch_table.item(0, 0).text() == "Ship Trail"
+
+    def test_twitch_count_label(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedTwitchRewards": ["^YOURSHIP_TRAIL", "^BLD_POSTER"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert "2" in tab._twitch_count.text()
+
+    def test_empty_twitch_rewards(self, tab):
+        psd = {"RedeemedSeasonRewards": []}
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._twitch_table.rowCount() == 0
+
+
+class TestPlatformRewards:
+    """R-EXP-05: Platform rewards consolidated on expedition tab."""
+
+    def test_platform_rewards_table_populated(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedPlatformRewards": ["^YOURSUIT_CAPE"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._platform_table.rowCount() == 1
+
+    def test_platform_rewards_names_resolved(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedPlatformRewards": ["^YOURSUIT_CAPE"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._platform_table.item(0, 0).text() == "Cape"
+
+    def test_platform_count_label(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [],
+            "RedeemedPlatformRewards": ["^YOURSUIT_CAPE"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert "1" in tab._platform_count.text()
+
+    def test_empty_platform_rewards(self, tab):
+        psd = {"RedeemedSeasonRewards": []}
+        tab.set_data(psd, common_state=COMMON_STATE)
+        assert tab._platform_table.rowCount() == 0
+
+
 class TestUnlockAllRewards:
     """R-EXP-03, R-EXP-04: Unlock all rewards button."""
 

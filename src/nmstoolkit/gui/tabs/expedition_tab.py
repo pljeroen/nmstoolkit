@@ -250,6 +250,36 @@ class ExpeditionTab(QWidget):
 
         layout.addWidget(rewards_group)
 
+        # Twitch Rewards
+        twitch_group = QGroupBox("Twitch Rewards")
+        twitch_layout = QVBoxLayout(twitch_group)
+        self._twitch_count = QLabel("0 rewards")
+        twitch_layout.addWidget(self._twitch_count)
+        self._twitch_table = QTableWidget()
+        self._twitch_table.setColumnCount(1)
+        self._twitch_table.setHorizontalHeaderLabels(["Reward"])
+        self._twitch_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self._twitch_table.setAlternatingRowColors(True)
+        twitch_layout.addWidget(self._twitch_table)
+        layout.addWidget(twitch_group)
+
+        # Platform Rewards
+        platform_group = QGroupBox("Platform Rewards")
+        platform_layout = QVBoxLayout(platform_group)
+        self._platform_count = QLabel("0 rewards")
+        platform_layout.addWidget(self._platform_count)
+        self._platform_table = QTableWidget()
+        self._platform_table.setColumnCount(1)
+        self._platform_table.setHorizontalHeaderLabels(["Reward"])
+        self._platform_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self._platform_table.setAlternatingRowColors(True)
+        platform_layout.addWidget(self._platform_table)
+        layout.addWidget(platform_group)
+
         # Offline expedition replay
         replay_group = QGroupBox("Offline Expedition Replay")
         replay_layout = QVBoxLayout(replay_group)
@@ -298,6 +328,8 @@ class ExpeditionTab(QWidget):
         self._populate_season_info()
         self._populate_milestones()
         self._populate_rewards()
+        self._populate_twitch_rewards()
+        self._populate_platform_rewards()
 
     def _populate_season_info(self):
         season_data = self._common_data.get("SeasonData", {})
@@ -373,6 +405,42 @@ class ExpeditionTab(QWidget):
         self._reward_filter.blockSignals(False)
 
         self._apply_reward_filter()
+
+    def _populate_twitch_rewards(self):
+        """Populate Twitch rewards table from RedeemedTwitchRewards."""
+        rewards = []
+        if self._data:
+            rewards = self._data.get("RedeemedTwitchRewards", [])
+
+        self._twitch_count.setText(f"{len(rewards)} rewards")
+        self._twitch_table.setRowCount(len(rewards))
+        for row, reward_id in enumerate(rewards):
+            reward_id = str(reward_id)
+            display = _resolve_reward_name(reward_id)
+            item = QTableWidgetItem(display)
+            item.setToolTip(reward_id)
+            pixmap = get_item_icon(reward_id)
+            if pixmap is not None:
+                item.setIcon(QIcon(pixmap))
+            self._twitch_table.setItem(row, 0, item)
+
+    def _populate_platform_rewards(self):
+        """Populate Platform rewards table from RedeemedPlatformRewards."""
+        rewards = []
+        if self._data:
+            rewards = self._data.get("RedeemedPlatformRewards", [])
+
+        self._platform_count.setText(f"{len(rewards)} rewards")
+        self._platform_table.setRowCount(len(rewards))
+        for row, reward_id in enumerate(rewards):
+            reward_id = str(reward_id)
+            display = _resolve_reward_name(reward_id)
+            item = QTableWidgetItem(display)
+            item.setToolTip(reward_id)
+            pixmap = get_item_icon(reward_id)
+            if pixmap is not None:
+                item.setIcon(QIcon(pixmap))
+            self._platform_table.setItem(row, 0, item)
 
     def _apply_reward_filter(self):
         """Filter rewards table by selected expedition number."""

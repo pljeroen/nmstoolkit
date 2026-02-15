@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-536%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -17,14 +17,14 @@ No Man's Sky save editor and toolkit.
 
 ## Features
 
-- Full inventory editing (exosuit, ships, multitools, freighter, vehicles, exocraft)
+- Full inventory editing (exosuit, ships, multitools, freighter, vehicles, exocraft) with unsigned 32-bit Units support
 - Companion/pet editing with gene modification (dynamic trait list, add/remove genes)
 - Squadron, frigate, and corvette management
-- Settlement editing with seed-based ownership detection and stat write-back
+- Settlement editing with seed-based ownership, stat write-back, production output, race/address/buildings
 - Base part budget table with per-base part counts, wire counts, and sortable columns
 - Fossil tracker — pieces across inventories and assembled displays in bases
-- Expedition progress, reward filter by expedition, unlock all rewards, offline replay
-- Account data editing (expedition rewards, Twitch drops, account-wide settings)
+- Expedition progress, reward filter by expedition, unlock all rewards, offline replay, Twitch/Platform rewards
+- Account data editing (account-wide settings)
 - 3D corvette builder with game mesh rendering (PyOpenGL)
 - Recipe finder with refiner recipe unlock
 - Fish finder reference guide
@@ -332,6 +332,7 @@ src/nmstoolkit/
 │   ├── save_scanner.py          # Find save profiles and slots on disk
 │   ├── exml_parser.py           # EXML → Python dicts (products, substances, tech, recipes, seasons, locale)
 │   ├── game_catalogue.py        # GameCatalogue: immutable container for all parsed game data
+│   ├── game_data_pipeline.py    # Orchestrates PAK → MBIN → EXML → GameCatalogue extraction
 │   ├── icon_cache.py            # DDS → PNG conversion and disk caching
 │   ├── icon_extractor.py        # PAK icon extraction + item-to-DDS mapping
 │   ├── mesh_data.py             # Domain model: Mesh, SceneNode, Transform
@@ -350,23 +351,41 @@ src/nmstoolkit/
 │   │   ├── ships_tab.py
 │   │   ├── corvette_tab.py      # Corvette builder with 2D/3D toggle
 │   │   ├── companions_tab.py    # Pet editing with gene trait modification
-│   │   ├── settlements_tab.py   # Settlement stats with seed-based ownership
+│   │   ├── settlements_tab.py   # Settlement stats, production, race/address/buildings
 │   │   ├── bases_tab.py         # Base storage + part budget table
 │   │   ├── fossils_tab.py       # Fossil pieces and base displays
-│   │   ├── expedition_tab.py    # Expedition progress, rewards, and replay
+│   │   ├── expedition_tab.py    # Expedition progress, rewards, Twitch/Platform, replay
 │   │   ├── discoveries_tab.py   # Discovery browser with address fallback
 │   │   ├── recipe_finder_tab.py
-│   │   └── ...                  # 20 tabs total
+│   │   ├── milestones_tab.py
+│   │   ├── account_tab.py
+│   │   ├── freighter_tab.py
+│   │   ├── frigates_tab.py
+│   │   ├── vehicles_tab.py
+│   │   ├── multitools_tab.py
+│   │   ├── squadron_tab.py
+│   │   ├── fish_finder_tab.py
+│   │   └── json_editor_tab.py   # 20 tabs total
 │   └── widgets/
 │       ├── inventory_grid.py    # Reusable inventory grid with drag-and-drop
 │       ├── slot_editor.py       # Single-slot detail editor
 │       ├── slot_optimizer.py    # Adjacency bonus optimizer
 │       ├── icon_provider.py     # Item ID → icon resolution with prefix fallbacks
-│       └── corvette_3d_view.py  # OpenGL 3D corvette viewport
+│       ├── corvette_3d_view.py  # OpenGL 3D corvette viewport
+│       ├── stat_editor.py       # Numeric stat spin box
+│       ├── enum_selector.py     # Enum combo box selector
+│       └── seed_editor.py       # Hex seed editor
 │
 ├── data/                        # Static data files
 │   ├── jsonmap.txt              # Obfuscated → readable key mapping
-│   └── items.json               # Static item database (fallback)
+│   ├── jsonmapac.txt            # Account data key mapping
+│   ├── items.json               # Static item database (fallback)
+│   ├── frigates.json            # Frigate trait reference data
+│   ├── inventory.json           # Inventory structure reference
+│   ├── rewards.json             # Reward ID reference
+│   ├── settlements.json         # Settlement reference data
+│   ├── words.json               # Alien word reference
+│   └── templates/               # JSON templates (ship, companion, multitool, slot)
 │
 └── app.py                       # Entry point
 ```
