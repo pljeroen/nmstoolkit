@@ -155,6 +155,17 @@ class BasesTab(QWidget):
         self._import_btn.clicked.connect(self._on_import)
         sel_layout.addWidget(self._import_btn)
 
+        self._move_up_btn = QPushButton("▲")
+        self._move_up_btn.setMaximumWidth(30)
+        self._move_up_btn.setToolTip("Move base up (changes teleport menu order)")
+        self._move_up_btn.clicked.connect(self._on_move_up)
+        sel_layout.addWidget(self._move_up_btn)
+        self._move_down_btn = QPushButton("▼")
+        self._move_down_btn.setMaximumWidth(30)
+        self._move_down_btn.setToolTip("Move base down (changes teleport menu order)")
+        self._move_down_btn.clicked.connect(self._on_move_down)
+        sel_layout.addWidget(self._move_down_btn)
+
         sel_layout.addStretch()
         top.addWidget(selector)
 
@@ -337,6 +348,22 @@ class BasesTab(QWidget):
             if combo_text.split(". ", 1)[-1] == clicked_name:
                 self._base_combo.setCurrentIndex(i)
                 break
+
+    def _on_move_up(self):
+        idx = self._base_combo.currentIndex()
+        if idx <= 0 or idx >= len(self._bases):
+            return
+        self._bases[idx], self._bases[idx - 1] = self._bases[idx - 1], self._bases[idx]
+        self.set_data(self._data)
+        self._base_combo.setCurrentIndex(idx - 1)
+
+    def _on_move_down(self):
+        idx = self._base_combo.currentIndex()
+        if idx < 0 or idx >= len(self._bases) - 1:
+            return
+        self._bases[idx], self._bases[idx + 1] = self._bases[idx + 1], self._bases[idx]
+        self.set_data(self._data)
+        self._base_combo.setCurrentIndex(idx + 1)
 
     def _refresh_library(self):
         """Repopulate library list from disk."""

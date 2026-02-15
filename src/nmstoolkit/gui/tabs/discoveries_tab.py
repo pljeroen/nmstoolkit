@@ -197,6 +197,17 @@ class DiscoveriesTab(QWidget):
         const_layout.addLayout(btn_layout)
         layout.addWidget(const_group)
 
+        # Discovery backup/restore
+        disc_group = QGroupBox("Discovery Data")
+        disc_layout = QHBoxLayout(disc_group)
+        self._disc_backup_btn = QPushButton("Backup Discoveries")
+        self._disc_backup_btn.clicked.connect(self._on_discovery_backup)
+        disc_layout.addWidget(self._disc_backup_btn)
+        self._disc_restore_btn = QPushButton("Restore Discoveries")
+        self._disc_restore_btn.clicked.connect(self._on_discovery_restore)
+        disc_layout.addWidget(self._disc_restore_btn)
+        layout.addWidget(disc_group)
+
     def set_data(self, discovery_data: dict):
         self._data = discovery_data
         store = discovery_data.get("DiscoveryData-v1", {})
@@ -276,6 +287,26 @@ class DiscoveriesTab(QWidget):
             if isinstance(data, list):
                 self._psd["VisitedSystems"] = data
                 self._update_constellation_label()
+
+    def _on_discovery_backup(self):
+        if self._data is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Backup Discoveries", "discoveries.json", "JSON files (*.json)"
+        )
+        if path:
+            with open(path, "w") as f:
+                json.dump(self._data, f, indent=2)
+
+    def _on_discovery_restore(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Restore Discoveries", "", "JSON files (*.json)"
+        )
+        if path:
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self.set_data(data)
 
     def _apply_filter(self):
         type_filter = self._type_filter.currentText()

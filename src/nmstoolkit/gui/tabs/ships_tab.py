@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
+from nmstoolkit.gui import vault
 
 _INV_CLASSES = ["C", "B", "A", "S"]
 
@@ -88,6 +89,25 @@ class ShipsTab(QWidget):
         sort_bar.addWidget(self._set_primary_btn)
         left_layout.addLayout(sort_bar)
 
+        # Vault
+        vault_group = QGroupBox("Cross-Save Vault")
+        vault_layout = QVBoxLayout(vault_group)
+        self._vault_list = QListWidget()
+        self._vault_list.setMaximumHeight(100)
+        vault_layout.addWidget(self._vault_list)
+        vault_btn_layout = QHBoxLayout()
+        self._vault_save_btn = QPushButton("Store in Vault")
+        self._vault_save_btn.clicked.connect(self._on_vault_save)
+        vault_btn_layout.addWidget(self._vault_save_btn)
+        self._vault_load_btn = QPushButton("Load from Vault")
+        self._vault_load_btn.clicked.connect(self._on_vault_load)
+        vault_btn_layout.addWidget(self._vault_load_btn)
+        self._vault_delete_btn = QPushButton("Delete")
+        self._vault_delete_btn.clicked.connect(self._on_vault_delete)
+        vault_btn_layout.addWidget(self._vault_delete_btn)
+        vault_layout.addLayout(vault_btn_layout)
+        left_layout.addWidget(vault_group)
+
         # Ship details
         details = QGroupBox("Ship Details")
         det_layout = QFormLayout(details)
@@ -141,6 +161,7 @@ class ShipsTab(QWidget):
         self._ships = psd.get("ShipOwnership", [])
         self._current_index = -1
         self._refresh_list()
+        self._refresh_vault()
         if self._ships:
             self._ship_list.setCurrentRow(0)
 
@@ -279,3 +300,35 @@ class ShipsTab(QWidget):
             elif primary == b:
                 self._data["PrimaryShip"] = a
         self._refresh_list()
+
+    def _refresh_vault(self):
+        self._vault_list.clear()
+        self._vault_entries = []
+        for path, name in vault.scan_vault("ships"):
+            self._vault_entries.append(path)
+            self._vault_list.addItem(name)
+
+    def _on_vault_save(self):
+        ship = self._current_ship()
+        if ship is None:
+            return
+        import copy
+        name = ship.get("Name", "") or "Ship"
+        vault.save_to_vault("ships", copy.deepcopy(ship), name)
+        self._refresh_vault()
+
+    def _on_vault_load(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        ship = vault.load_from_vault(self._vault_entries[row])
+        self._ships.append(ship)
+        self._refresh_list()
+        self._refresh_vault()
+
+    def _on_vault_delete(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        vault.delete_from_vault(self._vault_entries[row])
+        self._refresh_vault()

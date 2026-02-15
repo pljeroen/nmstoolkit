@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8-beta] - 2026-02-15
+
+### Added
+- Cross-save vault — store and transfer ships, multitools, and companions between save files
+- Base sorting (move up/down) for teleport menu order
+- Discovery backup/restore — save and restore discovery data
+
 ## [0.2.7-beta] - 2026-02-15
 
 ### Added

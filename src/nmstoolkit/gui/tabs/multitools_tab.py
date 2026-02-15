@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
+from nmstoolkit.gui import vault
 
 _INV_CLASSES = ["C", "B", "A", "S"]
 
@@ -53,6 +54,25 @@ class MultitoolsTab(QWidget):
         sort_bar.addWidget(self._set_active_btn)
         left_layout.addLayout(sort_bar)
 
+        # Vault
+        vault_group = QGroupBox("Cross-Save Vault")
+        vault_layout = QVBoxLayout(vault_group)
+        self._vault_list = QListWidget()
+        self._vault_list.setMaximumHeight(100)
+        vault_layout.addWidget(self._vault_list)
+        vault_btn_layout = QHBoxLayout()
+        self._vault_save_btn = QPushButton("Store in Vault")
+        self._vault_save_btn.clicked.connect(self._on_vault_save)
+        vault_btn_layout.addWidget(self._vault_save_btn)
+        self._vault_load_btn = QPushButton("Load from Vault")
+        self._vault_load_btn.clicked.connect(self._on_vault_load)
+        vault_btn_layout.addWidget(self._vault_load_btn)
+        self._vault_delete_btn = QPushButton("Delete")
+        self._vault_delete_btn.clicked.connect(self._on_vault_delete)
+        vault_btn_layout.addWidget(self._vault_delete_btn)
+        vault_layout.addLayout(vault_btn_layout)
+        left_layout.addWidget(vault_group)
+
         details = QGroupBox("Multitool Details")
         det_layout = QFormLayout(details)
         self._name_edit = QLineEdit()
@@ -82,6 +102,7 @@ class MultitoolsTab(QWidget):
         self._multitools = psd.get("Multitools", [])
         self._active_index = psd.get("ActiveMultioolIndex", 0)
         self._refresh_list()
+        self._refresh_vault()
         if self._multitools:
             self._list.setCurrentRow(0)
 
@@ -188,3 +209,35 @@ class MultitoolsTab(QWidget):
             else:
                 store["Class"] = {"InventoryClass": text}
         self._refresh_list()
+
+    def _refresh_vault(self):
+        self._vault_list.clear()
+        self._vault_entries = []
+        for path, name in vault.scan_vault("multitools"):
+            self._vault_entries.append(path)
+            self._vault_list.addItem(name)
+
+    def _on_vault_save(self):
+        mt = self._current_multitool()
+        if mt is None:
+            return
+        import copy
+        name = mt.get("Name", "") or "Multitool"
+        vault.save_to_vault("multitools", copy.deepcopy(mt), name)
+        self._refresh_vault()
+
+    def _on_vault_load(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        mt = vault.load_from_vault(self._vault_entries[row])
+        self._multitools.append(mt)
+        self._refresh_list()
+        self._refresh_vault()
+
+    def _on_vault_delete(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        vault.delete_from_vault(self._vault_entries[row])
+        self._refresh_vault()

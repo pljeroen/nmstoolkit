@@ -223,6 +223,57 @@ class TestUndiscoveredFilter:
         assert "Planet" in addr_text or "System" in addr_text or "Region" in addr_text
 
 
+class TestDiscoveryBackupRestore:
+    """R-DISC-02: Backup and restore discovery data."""
+
+    def test_backup_restore_buttons_exist(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        tab = DiscoveriesTab()
+        assert hasattr(tab, "_disc_backup_btn")
+        assert hasattr(tab, "_disc_restore_btn")
+
+    def test_backup_writes_file(self, tmp_path, monkeypatch):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        records = [_make_record("SolarSystem", name="Star A")]
+        disc_data = _make_discovery_data(records)
+        tab = DiscoveriesTab()
+        tab.set_data(disc_data)
+
+        backup_path = str(tmp_path / "discoveries.json")
+        monkeypatch.setattr(
+            "nmstoolkit.gui.tabs.discoveries_tab.QFileDialog.getSaveFileName",
+            lambda *a, **kw: (backup_path, ""),
+        )
+        tab._on_discovery_backup()
+        assert (tmp_path / "discoveries.json").exists()
+        data = json.loads((tmp_path / "discoveries.json").read_text())
+        assert "DiscoveryData-v1" in data
+
+    def test_restore_loads_file(self, tmp_path, monkeypatch):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        # Create backup file with known data
+        records = [_make_record("Planet", name="Restored Planet")]
+        disc_data = _make_discovery_data(records)
+        backup_path = tmp_path / "discoveries.json"
+        backup_path.write_text(json.dumps(disc_data))
+
+        # Start with empty discoveries
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        assert tab._table.rowCount() == 0
+
+        monkeypatch.setattr(
+            "nmstoolkit.gui.tabs.discoveries_tab.QFileDialog.getOpenFileName",
+            lambda *a, **kw: (str(backup_path), ""),
+        )
+        tab._on_discovery_restore()
+        assert tab._table.rowCount() == 1
+        assert tab._table.item(0, 1).text() == "Restored Planet"
+
+
 def _encode_galactic_address(voxel_x, voxel_y, voxel_z, system=1, planet=0):
     """Encode voxel coordinates into a galactic address integer."""
     addr = system & 0xFFFF

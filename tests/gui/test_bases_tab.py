@@ -222,6 +222,71 @@ class TestBaseExportImport:
         assert psd["PersistentPlayerBases"][-1]["Name"] == "Imported Base"
 
 
+class TestBaseSorting:
+    """R-BASE-07: Reorder bases for teleport menu."""
+
+    def test_sort_buttons_exist(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        tab = BasesTab()
+        assert hasattr(tab, "_move_up_btn")
+        assert hasattr(tab, "_move_down_btn")
+
+    def test_move_up(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        psd = {
+            "PersistentPlayerBases": [
+                _make_base("Alpha"),
+                _make_base("Beta"),
+                _make_base("Gamma"),
+            ]
+        }
+        tab = BasesTab()
+        tab.set_data(psd)
+        tab._base_combo.setCurrentIndex(1)  # Select Beta
+        tab._on_move_up()
+        assert psd["PersistentPlayerBases"][0]["Name"] == "Beta"
+        assert psd["PersistentPlayerBases"][1]["Name"] == "Alpha"
+
+    def test_move_down(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        psd = {
+            "PersistentPlayerBases": [
+                _make_base("Alpha"),
+                _make_base("Beta"),
+                _make_base("Gamma"),
+            ]
+        }
+        tab = BasesTab()
+        tab.set_data(psd)
+        tab._base_combo.setCurrentIndex(0)  # Select Alpha
+        tab._on_move_down()
+        assert psd["PersistentPlayerBases"][0]["Name"] == "Beta"
+        assert psd["PersistentPlayerBases"][1]["Name"] == "Alpha"
+
+    def test_move_up_at_top_is_noop(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        psd = {"PersistentPlayerBases": [_make_base("Alpha"), _make_base("Beta")]}
+        tab = BasesTab()
+        tab.set_data(psd)
+        tab._base_combo.setCurrentIndex(0)
+        tab._on_move_up()
+        assert psd["PersistentPlayerBases"][0]["Name"] == "Alpha"
+
+    def test_move_down_at_bottom_is_noop(self):
+        from nmstoolkit.gui.tabs.bases_tab import BasesTab
+
+        psd = {"PersistentPlayerBases": [_make_base("Alpha"), _make_base("Beta")]}
+        tab = BasesTab()
+        tab.set_data(psd)
+        tab._base_combo.setCurrentIndex(1)
+        tab._on_move_down()
+        assert psd["PersistentPlayerBases"][1]["Name"] == "Beta"
+
+
 class TestBaseLibrary:
     """R-BASE-06: In-tool base library for storing and swapping bases."""
 

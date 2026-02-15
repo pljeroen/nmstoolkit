@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-610%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-630%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -25,6 +25,7 @@ No Man's Sky save editor and toolkit.
 - Settlement editing with seed-based ownership, stat write-back, production output, perks, race/address/buildings
 - Base part budget table with per-base part counts, wire counts, and sortable columns
 - Base library — save, browse, and swap bases from a persistent local library
+- Base sorting (move up/down) for teleport menu order
 - Base export/import as portable JSON files
 - Fossil tracker — pieces across inventories and assembled displays in bases
 - Expedition progress, reward filter by expedition, unlock all rewards, offline replay, Twitch/Platform rewards
@@ -33,6 +34,8 @@ No Man's Sky save editor and toolkit.
 - Fish finder reference guide
 - Milestone and reputation tracking (Gek, Vy'keen, Korvax, guilds)
 - Discovery browser with undiscovered-only filter and decoded galactic addresses
+- Cross-save vault — store and transfer ships, multitools, and companions between save files
+- Discovery backup/restore — save and restore discovery data
 - Constellation editor — optimize, reset, backup/restore star map travel lines (NN + 2-opt path optimizer)
 - Galaxy atlas HTML export (self-contained single file with portal glyphs and game icons)
 - Raw JSON editor for direct save data manipulation

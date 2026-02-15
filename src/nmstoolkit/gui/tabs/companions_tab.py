@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
+from nmstoolkit.gui import vault
 
 # Friendly names for common creature IDs
 _CREATURE_NAMES = {
@@ -87,11 +88,31 @@ class CompanionsTab(QWidget):
         layout = QHBoxLayout(self)
 
         left = QWidget()
-        left.setMaximumWidth(220)
+        left.setMaximumWidth(260)
         left_layout = QVBoxLayout(left)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_selected)
         left_layout.addWidget(self._list)
+
+        # Vault
+        vault_group = QGroupBox("Cross-Save Vault")
+        vault_layout = QVBoxLayout(vault_group)
+        self._vault_list = QListWidget()
+        self._vault_list.setMaximumHeight(80)
+        vault_layout.addWidget(self._vault_list)
+        vault_btn_layout = QHBoxLayout()
+        self._vault_save_btn = QPushButton("Store")
+        self._vault_save_btn.clicked.connect(self._on_vault_save)
+        vault_btn_layout.addWidget(self._vault_save_btn)
+        self._vault_load_btn = QPushButton("Load")
+        self._vault_load_btn.clicked.connect(self._on_vault_load)
+        vault_btn_layout.addWidget(self._vault_load_btn)
+        self._vault_delete_btn = QPushButton("Delete")
+        self._vault_delete_btn.clicked.connect(self._on_vault_delete)
+        vault_btn_layout.addWidget(self._vault_delete_btn)
+        vault_layout.addLayout(vault_btn_layout)
+        left_layout.addWidget(vault_group)
+
         layout.addWidget(left)
 
         right = QWidget()
@@ -239,6 +260,7 @@ class CompanionsTab(QWidget):
             creature_id = pet.get("CreatureID", "")
             display = custom_name if custom_name else _friendly_creature_name(creature_id)
             self._list.addItem(f"{i + 1}. {display}")
+        self._refresh_vault()
         if self._companions:
             self._list.setCurrentRow(0)
 
@@ -458,3 +480,35 @@ class CompanionsTab(QWidget):
         self._egg_modified_check.blockSignals(True)
         self._egg_modified_check.setChecked(True)
         self._egg_modified_check.blockSignals(False)
+
+    def _refresh_vault(self):
+        self._vault_list.clear()
+        self._vault_entries = []
+        for path, name in vault.scan_vault("companions"):
+            self._vault_entries.append(path)
+            self._vault_list.addItem(name)
+
+    def _on_vault_save(self):
+        pet = self._current_companion()
+        if pet is None:
+            return
+        import copy
+        name = pet.get("CustomName", "") or _friendly_creature_name(pet.get("CreatureID", ""))
+        vault.save_to_vault("companions", copy.deepcopy(pet), name)
+        self._refresh_vault()
+
+    def _on_vault_load(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        pet = vault.load_from_vault(self._vault_entries[row])
+        all_pets = self._data.get("Pets", [])
+        all_pets.append(pet)
+        self.set_data(self._data)
+
+    def _on_vault_delete(self):
+        row = self._vault_list.currentRow()
+        if row < 0 or row >= len(self._vault_entries):
+            return
+        vault.delete_from_vault(self._vault_entries[row])
+        self._refresh_vault()
