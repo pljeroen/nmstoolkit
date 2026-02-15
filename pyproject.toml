@@ -29,6 +29,7 @@ dependencies = [
     "hgpaktool>=1.1",
     "zstandard>=0.22",
     "Pillow>=10.0",
+    "PyOpenGL>=3.1.7",
 ]
 
 [project.optional-dependencies]

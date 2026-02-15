@@ -32,6 +32,7 @@ jobs:
             --output-filename=nmstoolkit.exe ^
             --include-data-dir=src/nmstoolkit/data=nmstoolkit/data ^
             --include-package=nmstoolkit.gui.tabs ^
+            --include-package=OpenGL ^
             --include-module=PySide6.QtOpenGLWidgets ^
             --enable-plugin=pyside6 ^
             --assume-yes-for-downloads ^
