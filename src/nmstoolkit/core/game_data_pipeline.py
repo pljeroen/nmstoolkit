@@ -15,6 +15,7 @@ from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
 from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
 from nmstoolkit.core.exml_parser import (
     parse_locale_table,
+    parse_procedural_technology_table,
     parse_product_table,
     parse_recipe_table,
     parse_season_table,
@@ -32,6 +33,7 @@ _PRECACHE_TARGETS = [
     "metadata/reality/tables/nms_reality_gctechnologytable.mbin",
     "metadata/reality/tables/nms_reality_gcrecipetable.mbin",
     "metadata/reality/tables/historicalseasondatatable.mbin",
+    "metadata/reality/tables/nms_reality_gcproceduraltechnologytable.mbin",
 ]
 
 # Language files are split across multiple loc files
@@ -85,6 +87,7 @@ def build_catalogue(
     technologies = _parse_table(all_exml, _PRECACHE_TARGETS[2], parse_technology_table)
     recipes = _parse_table(all_exml, _PRECACHE_TARGETS[3], parse_recipe_table)
     seasons = _parse_table(all_exml, _PRECACHE_TARGETS[4], parse_season_table)
+    proc_techs = _parse_table(all_exml, _PRECACHE_TARGETS[5], parse_procedural_technology_table)
 
     # Build merged locale from all language files
     locale: Dict[str, str] = {}
@@ -97,6 +100,30 @@ def build_catalogue(
     substances = resolve_locale(substances, locale, "name")
     technologies = resolve_locale(technologies, locale, "name")
     seasons = resolve_locale(seasons, locale, "season_name")
+
+    # Map procedural tech icons from their base technology templates
+    tech_icons: Dict[str, str] = {t["id"]: t["icon"] for t in technologies if t.get("icon")}
+    for pt in proc_techs:
+        template = pt.get("template", "")
+        icon = tech_icons.get(template, "")
+        if not icon:
+            base = template.replace("T_", "").replace("UT_", "")
+            for prefix in ("", "UT_", "T_"):
+                alt = prefix + base
+                if alt in tech_icons:
+                    icon = tech_icons[alt]
+                    break
+        if icon:
+            technologies.append({
+                "id": pt["id"],
+                "name": pt.get("name", ""),
+                "display_name": locale.get(pt.get("name", ""), pt.get("name", "")),
+                "icon": icon,
+                "category": pt.get("category", ""),
+                "rarity": "",
+                "requirements": [],
+                "stat_bonuses": [],
+            })
 
     return GameCatalogue(
         products=products,

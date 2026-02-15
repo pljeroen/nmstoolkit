@@ -271,11 +271,23 @@ class MainWindow(QMainWindow):
 
         Rebuilds icon_map from catalogue if the catalogue has more items
         than the current map (handles stale maps from prior sessions).
+        Also migrates catalogue/icon_map from bundled data dir if found
+        (handles transition from old .exe that saved to temp dir).
         """
         cache_dir = _user_cache_dir()
 
         from nmstoolkit.gui.widgets.inventory_grid import set_icon_provider, set_catalogue
         from nmstoolkit.core.game_catalogue import GameCatalogue
+
+        # Migrate: if catalogue/icon_map exist in bundled DATA_DIR but not
+        # in persistent cache_dir, copy them over (old .exe wrote there)
+        import shutil
+        for fname in ("game_catalogue.json", "icon_map.json"):
+            dest = cache_dir / fname
+            if not dest.exists():
+                src = DATA_DIR / "icons" / fname
+                if src.exists():
+                    shutil.copy2(src, dest)
 
         # Load cached catalogue if available
         catalogue = None

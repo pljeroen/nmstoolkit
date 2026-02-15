@@ -223,6 +223,23 @@ def parse_technology_table(source: Union[str, bytes]) -> List[Dict[str, Any]]:
     return techs
 
 
+def parse_procedural_technology_table(source: Union[str, bytes]) -> List[Dict[str, Any]]:
+    """Parse a cGcProceduralTechnologyTable EXML into a list of proc-tech dicts.
+
+    Each entry has: id, template, name, category.
+    The template field references a base technology whose icon should be used.
+    """
+    proc_techs = []
+    for entry in _get_table_entries(source):
+        proc_techs.append({
+            "id": _get_field(entry, "ID") or "",
+            "template": _get_field(entry, "Template") or "",
+            "name": _get_field(entry, "Name") or "",
+            "category": _get_nested_field(entry, "Category", "ProceduralTechnologyCategory") or "",
+        })
+    return proc_techs
+
+
 def parse_season_table(source: Union[str, bytes]) -> List[Dict[str, Any]]:
     """Parse a cGcHistoricalSeasonDataTable EXML into a list of season dicts."""
     seasons = []
