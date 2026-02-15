@@ -19,20 +19,22 @@ No Man's Sky save editor and toolkit.
 
 - Full inventory editing (exosuit, ships, multitools, freighter, vehicles, exocraft) with unsigned 32-bit Units support
 - Companion/pet editing with gene modification (dynamic trait list, add/remove genes)
-- Squadron, frigate, and corvette management
-- Settlement editing with seed-based ownership, stat write-back, production output, race/address/buildings
+- Squadron management with pilot ship selection from player's owned ships
+- Frigate fleet management
+- 3D corvette builder with game mesh rendering (PyOpenGL)
+- Settlement editing with seed-based ownership, stat write-back, production output, perks, race/address/buildings
 - Base part budget table with per-base part counts, wire counts, and sortable columns
 - Base library — save, browse, and swap bases from a persistent local library
 - Base export/import as portable JSON files
 - Fossil tracker — pieces across inventories and assembled displays in bases
 - Expedition progress, reward filter by expedition, unlock all rewards, offline replay, Twitch/Platform rewards
 - Account data editing (account-wide settings)
-- 3D corvette builder with game mesh rendering (PyOpenGL)
 - Recipe finder with refiner recipe unlock
 - Fish finder reference guide
 - Milestone and reputation tracking (Gek, Vy'keen, Korvax, guilds)
-- Discovery browser with hex address fallback for unnamed entries
+- Discovery browser with undiscovered-only filter and decoded galactic addresses
 - Constellation editor — optimize, reset, backup/restore star map travel lines (NN + 2-opt path optimizer)
+- Galaxy atlas HTML export (self-contained single file with portal glyphs and game icons)
 - Raw JSON editor for direct save data manipulation
 - Game icon extraction and corvette model extraction from PAK files
 - Drag-and-drop inventory slot management with adjacency optimization
