@@ -6,20 +6,33 @@ Tests cover:
 - Camera state initialization
 - set_modules() data parsing
 - Corvette tab 2D/3D toggle integration
+- Matrix math utilities
+- Cube mesh generation
+- Mesh data API
 """
 
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import math
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from nmstoolkit.core.mesh_data import Mesh
 from nmstoolkit.gui.widgets.corvette_3d_view import (
+    _CUBE_MESH,
     _MODULE_CATEGORIES,
     _MODULE_COLORS,
+    _build_cube_mesh,
     _get_module_category,
     _get_module_color,
+    _mat4_identity,
+    _mat4_multiply,
+    _mat4_perspective,
+    _mat4_translate,
+    _normalize,
 )
 from nmstoolkit.gui.tabs.corvette_tab import CorvetteTab
 
@@ -116,3 +129,74 @@ class TestCorvetteTabToggle:
         tab.set_data(psd)
         # Build Grid tab should be visible
         assert tab._inv_tabs.isTabVisible(3) is True
+
+
+class TestMatrixMath:
+    def test_identity(self):
+        m = _mat4_identity()
+        assert len(m) == 16
+        assert m[0] == 1.0
+        assert m[5] == 1.0
+        assert m[10] == 1.0
+        assert m[15] == 1.0
+
+    def test_identity_multiply(self):
+        i = _mat4_identity()
+        t = _mat4_translate(3.0, 4.0, 5.0)
+        result = _mat4_multiply(i, t)
+        assert result == pytest.approx(t)
+
+    def test_translate(self):
+        t = _mat4_translate(1.0, 2.0, 3.0)
+        # Column-major: translation in elements 12, 13, 14
+        assert t[12] == 1.0
+        assert t[13] == 2.0
+        assert t[14] == 3.0
+
+    def test_perspective_produces_16_floats(self):
+        p = _mat4_perspective(45.0, 1.0, 0.1, 100.0)
+        assert len(p) == 16
+
+    def test_normalize(self):
+        n = _normalize((3.0, 4.0, 0.0))
+        assert n[0] == pytest.approx(0.6)
+        assert n[1] == pytest.approx(0.8)
+        assert n[2] == pytest.approx(0.0)
+
+    def test_normalize_zero_vector(self):
+        n = _normalize((0.0, 0.0, 0.0))
+        assert n == (0.0, 0.0, 1.0)
+
+
+class TestCubeMesh:
+    def test_cube_is_valid_mesh(self):
+        assert isinstance(_CUBE_MESH, Mesh)
+
+    def test_cube_has_24_vertices(self):
+        assert _CUBE_MESH.vertex_count == 24
+
+    def test_cube_has_36_indices(self):
+        assert _CUBE_MESH.index_count == 36
+
+    def test_cube_normals_are_unit_length(self):
+        for nx, ny, nz in _CUBE_MESH.normals:
+            length = math.sqrt(nx * nx + ny * ny + nz * nz)
+            assert length == pytest.approx(1.0, abs=0.01)
+
+    def test_build_cube_returns_fresh_mesh(self):
+        m = _build_cube_mesh()
+        assert m == _CUBE_MESH
+
+
+class TestMeshDataApi:
+    def test_corvette_view_accepts_mesh_data(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        view = Corvette3DView()
+        mesh = Mesh(
+            vertices=((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+            normals=((0, 0, 1),) * 3,
+            uvs=((0, 0), (1, 0), (0, 1)),
+            indices=(0, 1, 2),
+        )
+        view.set_mesh_data("B_COK_A", [mesh])
+        assert "B_COK_A" in view._mesh_data

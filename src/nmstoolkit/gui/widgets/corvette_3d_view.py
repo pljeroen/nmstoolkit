@@ -1,18 +1,21 @@
-"""3D corvette builder viewport — renders module grid as colored cubes.
+"""3D corvette builder viewport — renders modules with PyOpenGL.
 
-Uses PySide6's QOpenGLWidget with legacy fixed-function OpenGL.
-No external dependencies (PyOpenGL not required).
+Uses modern OpenGL 3.3+ with GLSL shaders for mesh rendering.
+Falls back to colored cubes when mesh cache is not available.
 """
 
 from __future__ import annotations
 
-import ctypes
+import array
 import math
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QWheelEvent
+from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+
+from nmstoolkit.core.mesh_data import Mesh
 
 # Module category → RGB color
 _MODULE_COLORS: Dict[str, Tuple[float, float, float]] = {
@@ -68,17 +71,227 @@ def _get_module_color(item_id: str) -> Tuple[float, float, float]:
     return _MODULE_COLORS.get(cat, (0.4, 0.4, 0.4))
 
 
+# ---------------------------------------------------------------------------
+# GLSL shaders
+# ---------------------------------------------------------------------------
+
+_VERTEX_SHADER = """\
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV;
+
+uniform mat4 uMVP;
+uniform mat4 uModel;
+
+out vec3 vNormal;
+out vec2 vUV;
+
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    vNormal = mat3(uModel) * aNormal;
+    vUV = aUV;
+}
+"""
+
+_FRAGMENT_SHADER = """\
+#version 330 core
+in vec3 vNormal;
+in vec2 vUV;
+
+uniform sampler2D uTex;
+uniform vec3 uTint;
+uniform vec3 uLightDir;
+uniform int uHasTexture;
+
+out vec4 fragColor;
+
+void main() {
+    vec3 n = normalize(vNormal);
+    float diff = max(dot(n, uLightDir), 0.0) * 0.7 + 0.3;
+    vec3 baseCol;
+    if (uHasTexture == 1) {
+        baseCol = texture(uTex, vUV).rgb;
+    } else {
+        baseCol = uTint;
+    }
+    fragColor = vec4(baseCol * diff, 1.0);
+}
+"""
+
+# Grid shader — simple lines without lighting
+_GRID_VERTEX_SHADER = """\
+#version 330 core
+layout(location = 0) in vec3 aPos;
+uniform mat4 uMVP;
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+"""
+
+_GRID_FRAGMENT_SHADER = """\
+#version 330 core
+uniform vec3 uColor;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(uColor, 1.0);
+}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Matrix math (pure Python, no numpy dependency)
+# ---------------------------------------------------------------------------
+
+def _mat4_identity() -> List[float]:
+    return [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    ]
+
+
+def _mat4_perspective(fov_deg: float, aspect: float, near: float, far: float) -> List[float]:
+    f = 1.0 / math.tan(math.radians(fov_deg) / 2.0)
+    return [
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (far + near) / (near - far), -1,
+        0, 0, (2 * far * near) / (near - far), 0,
+    ]
+
+
+def _mat4_look_at(eye, center, up) -> List[float]:
+    ex, ey, ez = eye
+    cx, cy, cz = center
+    ux, uy, uz = up
+
+    fx, fy, fz = cx - ex, cy - ey, cz - ez
+    mag = math.sqrt(fx * fx + fy * fy + fz * fz)
+    if mag == 0:
+        return _mat4_identity()
+    fx, fy, fz = fx / mag, fy / mag, fz / mag
+
+    sx = fy * uz - fz * uy
+    sy = fz * ux - fx * uz
+    sz = fx * uy - fy * ux
+    mag = math.sqrt(sx * sx + sy * sy + sz * sz)
+    if mag > 0:
+        sx, sy, sz = sx / mag, sy / mag, sz / mag
+
+    ux2 = sy * fz - sz * fy
+    uy2 = sz * fx - sx * fz
+    uz2 = sx * fy - sy * fx
+
+    return [
+        sx, ux2, -fx, 0,
+        sy, uy2, -fy, 0,
+        sz, uz2, -fz, 0,
+        -(sx * ex + sy * ey + sz * ez),
+        -(ux2 * ex + uy2 * ey + uz2 * ez),
+        (fx * ex + fy * ey + fz * ez),
+        1,
+    ]
+
+
+def _mat4_translate(x: float, y: float, z: float) -> List[float]:
+    return [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        x, y, z, 1,
+    ]
+
+
+def _mat4_multiply(a: List[float], b: List[float]) -> List[float]:
+    """Multiply two column-major 4x4 matrices."""
+    result = [0.0] * 16
+    for col in range(4):
+        for row in range(4):
+            s = 0.0
+            for k in range(4):
+                s += a[row + k * 4] * b[k + col * 4]
+            result[row + col * 4] = s
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Cube geometry for fallback rendering
+# ---------------------------------------------------------------------------
+
+def _build_cube_mesh() -> Mesh:
+    """Build a unit cube mesh centered at origin."""
+    s = 0.45
+    # 6 faces × 4 vertices = 24 vertices, 6 faces × 2 triangles × 3 = 36 indices
+    verts = []
+    norms = []
+    uvs_list = []
+    face_uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+
+    faces = [
+        # (normal, 4 corner offsets)
+        ((0, 1, 0), [(-s, s, -s), (s, s, -s), (s, s, s), (-s, s, s)]),      # top
+        ((0, -1, 0), [(-s, -s, s), (s, -s, s), (s, -s, -s), (-s, -s, -s)]), # bottom
+        ((0, 0, 1), [(-s, -s, s), (-s, s, s), (s, s, s), (s, -s, s)]),      # front
+        ((0, 0, -1), [(s, -s, -s), (s, s, -s), (-s, s, -s), (-s, -s, -s)]), # back
+        ((1, 0, 0), [(s, -s, s), (s, s, s), (s, s, -s), (s, -s, -s)]),      # right
+        ((-1, 0, 0), [(-s, -s, -s), (-s, s, -s), (-s, s, s), (-s, -s, s)]), # left
+    ]
+
+    indices = []
+    for normal, corners in faces:
+        base = len(verts)
+        for corner in corners:
+            verts.append(corner)
+            norms.append(normal)
+        for uv in face_uvs:
+            uvs_list.append(uv)
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+
+    return Mesh(
+        vertices=tuple(verts),
+        normals=tuple(norms),
+        uvs=tuple(uvs_list),
+        indices=tuple(indices),
+    )
+
+
+_CUBE_MESH = _build_cube_mesh()
+
+
+# ---------------------------------------------------------------------------
+# GPU mesh handle
+# ---------------------------------------------------------------------------
+
+class _GpuMesh:
+    """Holds VAO/VBO/EBO references for a mesh uploaded to GPU."""
+
+    __slots__ = ("vao", "vbo", "ebo", "index_count")
+
+    def __init__(self, vao: int, vbo: int, ebo: int, index_count: int):
+        self.vao = vao
+        self.vbo = vbo
+        self.ebo = ebo
+        self.index_count = index_count
+
+
+# ---------------------------------------------------------------------------
+# Main widget
+# ---------------------------------------------------------------------------
+
 class Corvette3DView(QOpenGLWidget):
     """3D viewport for corvette module visualization.
 
-    Renders modules as colored cubes on a grid. Supports orbit camera.
+    Renders modules using PyOpenGL with GLSL shaders. Falls back to
+    colored cubes when mesh cache is unavailable.
     """
 
     module_selected = Signal(int, int, str)  # x, y, item_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._modules: List[dict] = []  # Slot dicts with Index, Id
+        self._modules: List[dict] = []
         self._grid_width = 10
         self._grid_height = 16
         self._selected: Optional[Tuple[int, int]] = None
@@ -87,11 +300,21 @@ class Corvette3DView(QOpenGLWidget):
         self._cam_yaw = 45.0
         self._cam_pitch = 35.0
         self._cam_distance = 20.0
-        self._cam_target = [5.0, 0.0, 8.0]  # Center of grid
+        self._cam_target = [5.0, 0.0, 8.0]
 
         # Mouse tracking
         self._last_mouse_pos = QPoint()
         self._mouse_button = Qt.NoButton
+
+        # GL state (initialized in initializeGL)
+        self._gl_ready = False
+        self._shader_program = 0
+        self._grid_shader_program = 0
+        self._cube_gpu: Optional[_GpuMesh] = None
+        self._grid_gpu: Optional[_GpuMesh] = None
+        self._mesh_cache: Dict[str, _GpuMesh] = {}  # module_id → GPU mesh
+        self._texture_cache: Dict[str, int] = {}  # module_id → GL texture ID
+        self._mesh_data: Dict[str, List[Mesh]] = {}  # module_id → domain meshes
 
         self.setMinimumSize(400, 300)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -107,85 +330,91 @@ class Corvette3DView(QOpenGLWidget):
         self._cam_target = [self._grid_width / 2.0, 0.0, self._grid_height / 2.0]
         self.update()
 
+    def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
+        """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
+        self._mesh_data[module_id] = meshes
+        # Invalidate cached GPU mesh so it gets re-uploaded
+        self._mesh_cache.pop(module_id, None)
+
+    def set_texture(self, module_id: str, png_path: Path) -> None:
+        """Set texture for a module type from a PNG file path."""
+        # Texture upload happens in paintGL when GL context is current
+        self._pending_textures = getattr(self, "_pending_textures", {})
+        self._pending_textures[module_id] = png_path
+
     def initializeGL(self):
-        """Set up OpenGL state."""
-        from PySide6.QtOpenGL import QOpenGLVersionFunctionsFactory
-        # Get GL functions — we use the context directly via ctypes
-        ctx = self.context()
-        if ctx is None:
+        """Set up OpenGL state and compile shaders."""
+        try:
+            from OpenGL import GL
+            self._GL = GL
+        except ImportError:
             return
-        # We'll call GL functions through the context's native interface
-        self._gl_ready = True
+
+        GL.glClearColor(0.12, 0.12, 0.14, 1.0)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+
+        self._shader_program = self._compile_program(
+            _VERTEX_SHADER, _FRAGMENT_SHADER
+        )
+        self._grid_shader_program = self._compile_program(
+            _GRID_VERTEX_SHADER, _GRID_FRAGMENT_SHADER
+        )
+
+        if self._shader_program and self._grid_shader_program:
+            self._cube_gpu = self._upload_mesh(_CUBE_MESH)
+            self._grid_gpu = self._build_grid_vao()
+            self._gl_ready = True
 
     def resizeGL(self, w, h):
         """Handle resize."""
-        pass  # Projection set in paintGL
+        if self._gl_ready:
+            self._GL.glViewport(0, 0, w, h)
 
     def paintGL(self):
         """Render the 3D scene."""
-        if not hasattr(self, '_gl_ready'):
+        if not self._gl_ready:
             return
 
-        # Import GL functions via ctypes for fixed-function pipeline
-        try:
-            import ctypes
-            if not hasattr(self, '_gl'):
-                self._setup_gl()
-            gl = self._gl
-        except Exception:
-            return
+        GL = self._GL
 
         w, h = self.width(), self.height()
         if h == 0:
             h = 1
 
-        gl.glViewport(0, 0, w, h)
-        gl.glClearColor(0.12, 0.12, 0.14, 1.0)
-        gl.glClear(0x4100)  # GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT
-        gl.glEnable(0x0B71)  # GL_DEPTH_TEST
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
-        # Set up projection
-        gl.glMatrixMode(0x1701)  # GL_PROJECTION
-        gl.glLoadIdentity()
+        # Build view-projection matrix
         aspect = w / h
-        fov = 45.0
-        near, far = 0.1, 100.0
-        f = 1.0 / math.tan(math.radians(fov) / 2.0)
-        proj = [
-            f / aspect, 0, 0, 0,
-            0, f, 0, 0,
-            0, 0, (far + near) / (near - far), -1,
-            0, 0, (2 * far * near) / (near - far), 0,
-        ]
-        gl.glLoadMatrixf((ctypes.c_float * 16)(*proj))
+        proj = _mat4_perspective(45.0, aspect, 0.1, 100.0)
 
-        # Set up camera (orbit)
-        gl.glMatrixMode(0x1700)  # GL_MODELVIEW
-        gl.glLoadIdentity()
-
-        # Compute camera position from spherical coords
         yaw_rad = math.radians(self._cam_yaw)
         pitch_rad = math.radians(self._cam_pitch)
-        cx = self._cam_target[0] + self._cam_distance * math.cos(pitch_rad) * math.sin(yaw_rad)
-        cy = self._cam_target[1] + self._cam_distance * math.sin(pitch_rad)
-        cz = self._cam_target[2] + self._cam_distance * math.cos(pitch_rad) * math.cos(yaw_rad)
+        eye = (
+            self._cam_target[0] + self._cam_distance * math.cos(pitch_rad) * math.sin(yaw_rad),
+            self._cam_target[1] + self._cam_distance * math.sin(pitch_rad),
+            self._cam_target[2] + self._cam_distance * math.cos(pitch_rad) * math.cos(yaw_rad),
+        )
+        view = _mat4_look_at(eye, tuple(self._cam_target), (0, 1, 0))
+        vp = _mat4_multiply(proj, view)
 
-        self._look_at(gl, cx, cy, cz, *self._cam_target, 0, 1, 0)
+        # Upload pending textures
+        self._process_pending_textures()
 
-        # Enable simple lighting
-        gl.glEnable(0x2000)  # GL_LIGHTING
-        gl.glEnable(0x4000)  # GL_LIGHT0
-        light_pos = (ctypes.c_float * 4)(10.0, 20.0, 10.0, 0.0)
-        gl.glLightfv(0x4000, 0x1203, light_pos)  # GL_LIGHT0, GL_POSITION
-        light_amb = (ctypes.c_float * 4)(0.3, 0.3, 0.3, 1.0)
-        gl.glLightfv(0x4000, 0x1200, light_amb)  # GL_AMBIENT
-        light_diff = (ctypes.c_float * 4)(0.8, 0.8, 0.8, 1.0)
-        gl.glLightfv(0x4000, 0x1201, light_diff)  # GL_DIFFUSE
-
-        # Draw grid floor
-        self._draw_grid(gl)
+        # Draw grid
+        self._draw_grid(vp)
 
         # Draw modules
+        light_dir = _normalize((0.5, 0.8, 0.6))
+
+        GL.glUseProgram(self._shader_program)
+        loc_mvp = GL.glGetUniformLocation(self._shader_program, "uMVP")
+        loc_model = GL.glGetUniformLocation(self._shader_program, "uModel")
+        loc_tint = GL.glGetUniformLocation(self._shader_program, "uTint")
+        loc_light = GL.glGetUniformLocation(self._shader_program, "uLightDir")
+        loc_has_tex = GL.glGetUniformLocation(self._shader_program, "uHasTexture")
+
+        GL.glUniform3f(loc_light, *light_dir)
+
         for slot in self._modules:
             idx = slot.get("Index", {})
             x, z = idx.get("X", 0), idx.get("Y", 0)
@@ -196,145 +425,217 @@ class Corvette3DView(QOpenGLWidget):
             if is_selected:
                 r, g, b = min(1.0, r + 0.3), min(1.0, g + 0.3), min(1.0, b + 0.3)
 
-            self._draw_cube(gl, x, 0, z, r, g, b)
+            model = _mat4_translate(float(x), 0.0, float(z))
+            mvp = _mat4_multiply(vp, model)
 
-        gl.glDisable(0x2000)  # GL_LIGHTING
+            GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, mvp)
+            GL.glUniformMatrix4fv(loc_model, 1, GL.GL_FALSE, model)
+            GL.glUniform3f(loc_tint, r, g, b)
 
-    def _setup_gl(self):
-        """Load GL functions from the system OpenGL library."""
-        import platform
-        system = platform.system()
-        if system == "Windows":
-            self._gl = ctypes.windll.opengl32
-        elif system == "Darwin":
-            self._gl = ctypes.cdll.LoadLibrary(
-                "/System/Library/Frameworks/OpenGL.framework/OpenGL"
-            )
-        else:
-            self._gl = ctypes.cdll.LoadLibrary("libGL.so.1")
+            # Use cached mesh if available, otherwise cube fallback
+            stripped_id = item_id.lstrip("^")
+            gpu_mesh = self._get_or_upload_mesh(stripped_id)
+            has_texture = stripped_id in self._texture_cache
 
-        gl = self._gl
+            if has_texture:
+                GL.glUniform1i(loc_has_tex, 1)
+                GL.glActiveTexture(GL.GL_TEXTURE0)
+                GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture_cache[stripped_id])
+            else:
+                GL.glUniform1i(loc_has_tex, 0)
 
-        # Set up function signatures
-        gl.glViewport.argtypes = [ctypes.c_int] * 4
-        gl.glClearColor.argtypes = [ctypes.c_float] * 4
-        gl.glClear.argtypes = [ctypes.c_uint]
-        gl.glEnable.argtypes = [ctypes.c_uint]
-        gl.glDisable.argtypes = [ctypes.c_uint]
-        gl.glMatrixMode.argtypes = [ctypes.c_uint]
-        gl.glLoadIdentity.argtypes = []
-        gl.glLoadMatrixf.argtypes = [ctypes.POINTER(ctypes.c_float)]
-        gl.glLightfv.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_float)]
-        gl.glMaterialfv.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_float)]
-        gl.glBegin.argtypes = [ctypes.c_uint]
-        gl.glEnd.argtypes = []
-        gl.glVertex3f.argtypes = [ctypes.c_float] * 3
-        gl.glNormal3f.argtypes = [ctypes.c_float] * 3
-        gl.glColor3f.argtypes = [ctypes.c_float] * 3
-        gl.glColor4f.argtypes = [ctypes.c_float] * 4
-        gl.glLineWidth.argtypes = [ctypes.c_float]
+            GL.glBindVertexArray(gpu_mesh.vao)
+            GL.glDrawElements(GL.GL_TRIANGLES, gpu_mesh.index_count, GL.GL_UNSIGNED_INT, None)
 
-    def _look_at(self, gl, ex, ey, ez, cx, cy, cz, ux, uy, uz):
-        """Implement gluLookAt manually."""
-        fx, fy, fz = cx - ex, cy - ey, cz - ez
-        mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-        if mag == 0:
+        GL.glBindVertexArray(0)
+        GL.glUseProgram(0)
+
+    # ---- Shader compilation ----
+
+    def _compile_program(self, vert_src: str, frag_src: str) -> int:
+        GL = self._GL
+
+        vs = GL.glCreateShader(GL.GL_VERTEX_SHADER)
+        GL.glShaderSource(vs, vert_src)
+        GL.glCompileShader(vs)
+        if not GL.glGetShaderiv(vs, GL.GL_COMPILE_STATUS):
+            log = GL.glGetShaderInfoLog(vs)
+            GL.glDeleteShader(vs)
+            return 0
+
+        fs = GL.glCreateShader(GL.GL_FRAGMENT_SHADER)
+        GL.glShaderSource(fs, frag_src)
+        GL.glCompileShader(fs)
+        if not GL.glGetShaderiv(fs, GL.GL_COMPILE_STATUS):
+            log = GL.glGetShaderInfoLog(fs)
+            GL.glDeleteShader(vs)
+            GL.glDeleteShader(fs)
+            return 0
+
+        prog = GL.glCreateProgram()
+        GL.glAttachShader(prog, vs)
+        GL.glAttachShader(prog, fs)
+        GL.glLinkProgram(prog)
+        GL.glDeleteShader(vs)
+        GL.glDeleteShader(fs)
+
+        if not GL.glGetProgramiv(prog, GL.GL_LINK_STATUS):
+            log = GL.glGetProgramInfoLog(prog)
+            GL.glDeleteProgram(prog)
+            return 0
+
+        return prog
+
+    # ---- Mesh upload ----
+
+    def _upload_mesh(self, mesh: Mesh) -> _GpuMesh:
+        """Upload a Mesh to GPU as VAO/VBO/EBO."""
+        GL = self._GL
+        import ctypes
+
+        # Interleave vertex data: pos(3) + normal(3) + uv(2) = 8 floats per vertex
+        vertex_data = array.array("f")
+        for i in range(len(mesh.vertices)):
+            vertex_data.extend(mesh.vertices[i])
+            vertex_data.extend(mesh.normals[i] if i < len(mesh.normals) else (0, 0, 1))
+            vertex_data.extend(mesh.uvs[i] if i < len(mesh.uvs) else (0, 0))
+
+        index_data = array.array("I", mesh.indices)
+
+        vao = GL.glGenVertexArrays(1)
+        vbo = GL.glGenBuffers(1)
+        ebo = GL.glGenBuffers(1)
+
+        GL.glBindVertexArray(vao)
+
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo)
+        GL.glBufferData(
+            GL.GL_ARRAY_BUFFER,
+            vertex_data.itemsize * len(vertex_data),
+            vertex_data.tobytes(),
+            GL.GL_STATIC_DRAW,
+        )
+
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, ebo)
+        GL.glBufferData(
+            GL.GL_ELEMENT_ARRAY_BUFFER,
+            index_data.itemsize * len(index_data),
+            index_data.tobytes(),
+            GL.GL_STATIC_DRAW,
+        )
+
+        stride = 8 * 4  # 8 floats × 4 bytes
+
+        # Position: location 0
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, stride, ctypes.c_void_p(0))
+        GL.glEnableVertexAttribArray(0)
+
+        # Normal: location 1
+        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, stride, ctypes.c_void_p(12))
+        GL.glEnableVertexAttribArray(1)
+
+        # UV: location 2
+        GL.glVertexAttribPointer(2, 2, GL.GL_FLOAT, GL.GL_FALSE, stride, ctypes.c_void_p(24))
+        GL.glEnableVertexAttribArray(2)
+
+        GL.glBindVertexArray(0)
+
+        return _GpuMesh(vao, vbo, ebo, len(mesh.indices))
+
+    def _get_or_upload_mesh(self, module_id: str) -> _GpuMesh:
+        """Get GPU mesh for module, uploading from mesh_data if available."""
+        if module_id in self._mesh_cache:
+            return self._mesh_cache[module_id]
+
+        if module_id in self._mesh_data and self._mesh_data[module_id]:
+            # Upload first mesh from the list
+            gpu = self._upload_mesh(self._mesh_data[module_id][0])
+            self._mesh_cache[module_id] = gpu
+            return gpu
+
+        # Fallback: use cube
+        return self._cube_gpu
+
+    # ---- Grid ----
+
+    def _build_grid_vao(self) -> _GpuMesh:
+        """Build grid lines VAO."""
+        return self._rebuild_grid_vao(self._grid_width, self._grid_height)
+
+    def _rebuild_grid_vao(self, w: int, h: int) -> _GpuMesh:
+        GL = self._GL
+        import ctypes
+
+        verts = array.array("f")
+        for x in range(w + 1):
+            verts.extend([float(x) - 0.5, -0.5, -0.5])
+            verts.extend([float(x) - 0.5, -0.5, float(h) - 0.5])
+        for z in range(h + 1):
+            verts.extend([-0.5, -0.5, float(z) - 0.5])
+            verts.extend([float(w) - 0.5, -0.5, float(z) - 0.5])
+
+        num_verts = (w + 1 + h + 1) * 2
+
+        vao = GL.glGenVertexArrays(1)
+        vbo = GL.glGenBuffers(1)
+        GL.glBindVertexArray(vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.itemsize * len(verts), verts.tobytes(), GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 12, ctypes.c_void_p(0))
+        GL.glEnableVertexAttribArray(0)
+        GL.glBindVertexArray(0)
+
+        return _GpuMesh(vao, vbo, 0, num_verts)
+
+    def _draw_grid(self, vp: List[float]) -> None:
+        GL = self._GL
+        GL.glUseProgram(self._grid_shader_program)
+
+        loc_mvp = GL.glGetUniformLocation(self._grid_shader_program, "uMVP")
+        loc_color = GL.glGetUniformLocation(self._grid_shader_program, "uColor")
+
+        GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, vp)
+        GL.glUniform3f(loc_color, 0.3, 0.3, 0.35)
+
+        GL.glBindVertexArray(self._grid_gpu.vao)
+        GL.glDrawArrays(GL.GL_LINES, 0, self._grid_gpu.index_count)
+        GL.glBindVertexArray(0)
+
+    # ---- Textures ----
+
+    def _process_pending_textures(self) -> None:
+        """Upload any pending textures to GPU."""
+        pending = getattr(self, "_pending_textures", {})
+        if not pending:
             return
-        fx, fy, fz = fx / mag, fy / mag, fz / mag
 
-        sx = fy * uz - fz * uy
-        sy = fz * ux - fx * uz
-        sz = fx * uy - fy * ux
-        mag = math.sqrt(sx * sx + sy * sy + sz * sz)
-        if mag > 0:
-            sx, sy, sz = sx / mag, sy / mag, sz / mag
+        GL = self._GL
+        for module_id, png_path in list(pending.items()):
+            if not png_path.exists():
+                continue
+            try:
+                from PIL import Image
+                img = Image.open(png_path).convert("RGBA")
+                img_data = img.tobytes()
+                w, h = img.size
 
-        ux2 = sy * fz - sz * fy
-        uy2 = sz * fx - sx * fz
-        uz2 = sx * fy - sy * fx
+                tex_id = GL.glGenTextures(1)
+                GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
+                GL.glTexImage2D(
+                    GL.GL_TEXTURE_2D, 0, GL.GL_RGBA,
+                    w, h, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, img_data,
+                )
+                GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+                GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+                GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+                GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+                GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
 
-        m = [
-            sx, ux2, -fx, 0,
-            sy, uy2, -fy, 0,
-            sz, uz2, -fz, 0,
-            -(sx * ex + sy * ey + sz * ez),
-            -(ux2 * ex + uy2 * ey + uz2 * ez),
-            (fx * ex + fy * ey + fz * ez),
-            1,
-        ]
-        gl.glLoadMatrixf((ctypes.c_float * 16)(*m))
+                self._texture_cache[module_id] = tex_id
+            except Exception:
+                pass
 
-    def _draw_grid(self, gl):
-        """Draw a floor grid."""
-        gl.glDisable(0x2000)  # Disable lighting for lines
-        gl.glColor4f(0.3, 0.3, 0.35, 1.0)
-        gl.glLineWidth(1.0)
-        gl.glBegin(0x0001)  # GL_LINES
-        for x in range(self._grid_width + 1):
-            gl.glVertex3f(float(x) - 0.5, -0.5, -0.5)
-            gl.glVertex3f(float(x) - 0.5, -0.5, float(self._grid_height) - 0.5)
-        for z in range(self._grid_height + 1):
-            gl.glVertex3f(-0.5, -0.5, float(z) - 0.5)
-            gl.glVertex3f(float(self._grid_width) - 0.5, -0.5, float(z) - 0.5)
-        gl.glEnd()
-        gl.glEnable(0x2000)  # Re-enable lighting
-
-    def _draw_cube(self, gl, x: int, y: int, z: int, r: float, g: float, b: float):
-        """Draw a unit cube at grid position (x, y, z)."""
-        mat_diff = (ctypes.c_float * 4)(r, g, b, 1.0)
-        mat_amb = (ctypes.c_float * 4)(r * 0.4, g * 0.4, b * 0.4, 1.0)
-        gl.glMaterialfv(0x0408, 0x1201, mat_diff)  # GL_FRONT_AND_BACK, GL_DIFFUSE
-        gl.glMaterialfv(0x0408, 0x1200, mat_amb)   # GL_AMBIENT
-
-        s = 0.45  # Half-size (slightly smaller than 0.5 for gaps)
-        cx, cy, cz = float(x), float(y), float(z)
-
-        # 6 faces
-        gl.glBegin(0x0007)  # GL_QUADS
-
-        # Top
-        gl.glNormal3f(0, 1, 0)
-        gl.glVertex3f(cx - s, cy + s, cz - s)
-        gl.glVertex3f(cx + s, cy + s, cz - s)
-        gl.glVertex3f(cx + s, cy + s, cz + s)
-        gl.glVertex3f(cx - s, cy + s, cz + s)
-
-        # Bottom
-        gl.glNormal3f(0, -1, 0)
-        gl.glVertex3f(cx - s, cy - s, cz + s)
-        gl.glVertex3f(cx + s, cy - s, cz + s)
-        gl.glVertex3f(cx + s, cy - s, cz - s)
-        gl.glVertex3f(cx - s, cy - s, cz - s)
-
-        # Front
-        gl.glNormal3f(0, 0, 1)
-        gl.glVertex3f(cx - s, cy - s, cz + s)
-        gl.glVertex3f(cx - s, cy + s, cz + s)
-        gl.glVertex3f(cx + s, cy + s, cz + s)
-        gl.glVertex3f(cx + s, cy - s, cz + s)
-
-        # Back
-        gl.glNormal3f(0, 0, -1)
-        gl.glVertex3f(cx + s, cy - s, cz - s)
-        gl.glVertex3f(cx + s, cy + s, cz - s)
-        gl.glVertex3f(cx - s, cy + s, cz - s)
-        gl.glVertex3f(cx - s, cy - s, cz - s)
-
-        # Right
-        gl.glNormal3f(1, 0, 0)
-        gl.glVertex3f(cx + s, cy - s, cz + s)
-        gl.glVertex3f(cx + s, cy + s, cz + s)
-        gl.glVertex3f(cx + s, cy + s, cz - s)
-        gl.glVertex3f(cx + s, cy - s, cz - s)
-
-        # Left
-        gl.glNormal3f(-1, 0, 0)
-        gl.glVertex3f(cx - s, cy - s, cz - s)
-        gl.glVertex3f(cx - s, cy + s, cz - s)
-        gl.glVertex3f(cx - s, cy + s, cz + s)
-        gl.glVertex3f(cx - s, cy - s, cz + s)
-
-        gl.glEnd()
+        pending.clear()
 
     # ---- Mouse interaction ----
 
@@ -371,3 +672,11 @@ class Corvette3DView(QOpenGLWidget):
         self._cam_distance = max(3.0, min(60.0, self._cam_distance))
         self.update()
         super().wheelEvent(event)
+
+
+def _normalize(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    x, y, z = v
+    mag = math.sqrt(x * x + y * y + z * z)
+    if mag == 0:
+        return (0.0, 0.0, 1.0)
+    return (x / mag, y / mag, z / mag)
