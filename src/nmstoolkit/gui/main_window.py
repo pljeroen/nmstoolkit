@@ -443,6 +443,9 @@ class MainWindow(QMainWindow):
         provider = IconProvider(icon_cache, _CATALOGUE, icon_map=icon_map)
         set_icon_provider(provider)
 
+        # Refresh recipe tab with newly extracted catalogue data
+        self._recipe_finder_tab.refresh_recipes()
+
         if self._save_file:
             self._populate_tabs()
 

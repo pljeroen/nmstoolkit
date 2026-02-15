@@ -113,6 +113,11 @@ def _get_item_name(item_id: str) -> str:
             item = _CATALOGUE.find_item(base_id)
             if item is not None:
                 return item.get("display_name", item.get("name", base_id))
+        # Locale fallback: resolve locale keys not in product/substance/technology tables
+        bare = item_id.lstrip("^")
+        locale_name = _CATALOGUE.locale.get(bare) or _CATALOGUE.locale.get(item_id)
+        if locale_name:
+            return locale_name
 
     if _ITEM_NAMES is None:
         _ITEM_NAMES = _load_item_names()

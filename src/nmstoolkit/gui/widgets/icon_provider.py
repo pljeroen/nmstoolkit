@@ -67,6 +67,26 @@ _UPGRADE_PREFIX_MAP = {
 
 _YOUR_PREFIX_STRIP = ("YOURSHIP_", "YOURSUIT_", "YOURMULTI_", "YOURFREIG_", "YOURVEHIC_")
 
+# Corvette module prefixes → mapped to base building part IDs for icon resolution.
+# These are building parts that appear in corvette inventories.
+_CORVETTE_MODULE_MAP = {
+    "B_COK": "BUILD_YOURSHIP_COCKPIT",
+    "B_HAB": "BUILD_YOURSHIP_HAB",
+    "B_HAB1": "BUILD_YOURSHIP_HAB",
+    "B_WNG": "BUILD_YOURSHIP_WING",
+    "B_STR": "BUILD_YOURSHIP_STRUCTURE",
+    "B_CON": "BUILD_YOURSHIP_CONNECTOR",
+    "B_CON2": "BUILD_YOURSHIP_CONNECTOR",
+    "B_CON_L": "BUILD_YOURSHIP_CONNECTOR",
+    "B_TRU": "BUILD_YOURSHIP_THRUSTER",
+    "B_TUR": "BUILD_YOURSHIP_TURRET",
+    "B_LND": "BUILD_YOURSHIP_LANDING",
+    "B_SHL": "BUILD_YOURSHIP_SHELL",
+    "B_ALK": "BUILD_YOURSHIP_AIRLOCK",
+    "B_GEN": "BUILD_YOURSHIP_GENERATOR",
+    "B_DECO": "BUILD_YOURSHIP_DECO",
+}
+
 _YOUR_SPECIAL_MAP = {
     "YOURSHIP_LAUNCH": "LAUNCHER",
     "YOURSHIP_PULSEDRIVE": "SHIPJUMP1",
@@ -146,6 +166,13 @@ class IconProvider:
             if result:
                 return result
 
+        # 6. Corvette module prefix resolution (B_COK_A -> BUILD_YOURSHIP_COCKPIT)
+        resolved = self._resolve_corvette_module(uid)
+        if resolved:
+            result = self._lookup_resolved(resolved)
+            if result:
+                return result
+
         return ""
 
     def _lookup_resolved(self, resolved_id: str) -> str:
@@ -207,6 +234,25 @@ class IconProvider:
             if uid_upper.startswith(prefix) and len(prefix) > len(best_match):
                 best_match = prefix
                 best_base = base_tech
+        return best_base
+
+    @staticmethod
+    def _resolve_corvette_module(uid: str) -> str:
+        """Resolve a corvette module ID (B_COK_A, B_WNG_B) to a base building part ID.
+
+        Returns the mapped building part ID, or empty string if not a corvette module.
+        """
+        uid_upper = uid.upper()
+        # Strip procedural suffix
+        if "#" in uid_upper:
+            uid_upper = uid_upper.split("#")[0]
+        # Match longest prefix first
+        best_match = ""
+        best_base = ""
+        for prefix, base_id in _CORVETTE_MODULE_MAP.items():
+            if uid_upper.startswith(prefix) and len(prefix) > len(best_match):
+                best_match = prefix
+                best_base = base_id
         return best_base
 
     def get_pixmap_path(self, item_id: str) -> Optional[Path]:

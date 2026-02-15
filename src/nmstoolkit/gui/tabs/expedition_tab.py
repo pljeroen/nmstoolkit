@@ -99,6 +99,24 @@ _REWARD_NAMES = {
 }
 
 
+def _resolve_locale_name(raw_name: str) -> str:
+    """Resolve a locale key to a display name.
+
+    Handles ^UI_SEASON_* keys by trying get_item_display_name first,
+    then falling back to a cleaned version of the raw string.
+    """
+    if not raw_name:
+        return "Unknown"
+    # If it looks like a locale key (starts with ^ or UI_), try resolution
+    if raw_name.startswith("^") or raw_name.startswith("UI_"):
+        resolved = get_item_display_name(raw_name)
+        if resolved != raw_name and resolved != raw_name.lstrip("^"):
+            return resolved
+        # Fallback: strip caret, replace underscores, title case
+        return raw_name.lstrip("^").replace("_", " ").title()
+    return raw_name
+
+
 def _resolve_reward_name(reward_id: str) -> str:
     """Resolve a reward ID to a human-readable name."""
     # Check exact match first
@@ -258,8 +276,11 @@ class ExpeditionTab(QWidget):
             return
 
         season_num = season_data.get("SeasonNumber", "?")
-        season_name = season_data.get("SeasonName", "Unknown")
+        raw_season_name = season_data.get("SeasonName", "Unknown")
         season_id = season_data.get("SeasonId", "?")
+
+        # Resolve locale keys (e.g. ^UI_SEASON_19_NAME -> "Corvette")
+        season_name = _resolve_locale_name(raw_season_name)
 
         has_final = season_state.get("HasCollectedFinalReward", False)
         final_status = "Collected" if has_final else "Not collected"
@@ -267,8 +288,11 @@ class ExpeditionTab(QWidget):
         self._season_info.setText(
             f"Season {season_id} (#{season_num}) — {season_name}"
         )
+
+        raw_final = season_data.get("FinalReward", "—")
+        final_name = _resolve_reward_name(raw_final) if raw_final != "—" else "—"
         self._final_reward_label.setText(
-            f"Final Reward: {season_data.get('FinalReward', '—')} ({final_status})"
+            f"Final Reward: {final_name} ({final_status})"
         )
 
     def _populate_milestones(self):

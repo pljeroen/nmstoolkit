@@ -16,3 +16,7 @@ src/nmstoolkit/data/game_catalogue.json
 error_pictures/
 SESSION_HANDOFF.md
 CLAUDE.md
+
+
+# Personal workflow files (auto-added by tddv6-scaffold)
+SESSION_HANDOFF*.md

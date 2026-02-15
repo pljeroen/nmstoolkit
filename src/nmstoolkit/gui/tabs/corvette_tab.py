@@ -69,10 +69,26 @@ def _get_module_category(item_id: str) -> str:
     return "Unknown"
 
 
+_CORVETTE_MODULE_PREFIXES = ("B_COK", "B_HAB", "B_WNG", "B_STR", "B_TRU", "B_TUR", "B_LND", "B_SHL", "B_ALK", "B_GEN", "B_CON", "B_DECO")
+
+
 def _is_corvette_ship(ship: dict) -> bool:
-    """Check if a ship is a corvette (BIGGS model)."""
+    """Check if a ship is a corvette.
+
+    Detection: BIGGS model filename OR presence of corvette module IDs
+    (B_COK, B_HAB, B_WNG, etc.) in inventory slots.
+    """
     filename = ship.get("Resource", {}).get("Filename", "").upper()
-    return "BIGGS" in filename
+    if "BIGGS" in filename:
+        return True
+    # Fallback: check for corvette-specific modules in inventory
+    slots = ship.get("Inventory", {}).get("Slots", [])
+    for slot in slots:
+        slot_id = slot.get("Id", "").lstrip("^").upper()
+        for prefix in _CORVETTE_MODULE_PREFIXES:
+            if slot_id.startswith(prefix):
+                return True
+    return False
 
 
 class CorvetteTab(QWidget):

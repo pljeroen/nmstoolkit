@@ -44,15 +44,19 @@ def _load_items():
         return json.load(f)
 
 
-def _load_catalogue_recipes():
-    """Load recipes from game catalogue if available."""
+def _catalogue_path() -> Path:
+    """Return the path to game_catalogue.json."""
     import sys
-    # In frozen .exe, catalogue is cached next to the executable
     if getattr(sys, "frozen", False):
         cache_dir = Path(sys.executable).parent / "icons"
     else:
         cache_dir = DATA_DIR / "icons"
-    cat_path = cache_dir / "game_catalogue.json"
+    return cache_dir / "game_catalogue.json"
+
+
+def _load_catalogue_recipes():
+    """Load recipes from game catalogue if available."""
+    cat_path = _catalogue_path()
     if not cat_path.exists():
         return []
     with open(cat_path) as f:
@@ -214,6 +218,16 @@ class RecipeFinderTab(QWidget):
 
         self._table.setSortingEnabled(True)
         self._count_label.setText(f"{len(food_items)} food items")
+
+    def refresh_recipes(self):
+        """Reload recipes from game_catalogue.json (e.g. after extraction)."""
+        self._all_recipes = _load_catalogue_recipes()
+        if self._all_recipes:
+            self._note.setVisible(False)
+            self._populate_recipe_table(self._all_recipes)
+        else:
+            self._note.setVisible(True)
+            self._populate_fallback_table()
 
     def _apply_filter(self):
         search = self._search_edit.text().lower().strip()
