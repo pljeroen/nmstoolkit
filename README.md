@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-367%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-536%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -18,14 +18,16 @@ No Man's Sky save editor and toolkit.
 ## Features
 
 - Full inventory editing (exosuit, ships, multitools, freighter, vehicles)
-- Companion/pet editing with gene modification support
-- Squadron, frigate, and settlement management
-- Base storage viewing
-- Expedition progress and offline replay
+- Companion/pet editing with gene modification (dynamic trait list, add/remove genes)
+- Squadron, frigate, and settlement management (seed-based ownership, stat write-back)
+- Base part budget table with per-base part counts, wire counts, and sortable columns
+- Fossil tracker — pieces across inventories and assembled displays in bases
+- Expedition progress, reward filter by expedition, unlock all rewards, offline replay
+- 3D corvette builder with game mesh rendering (PyOpenGL)
 - Recipe finder with refiner recipe unlock
 - Fish finder reference guide
 - Milestone and reputation tracking
-- Discovery browser
+- Discovery browser with hex address fallback for unnamed entries
 - Game icon extraction from PAK files
 - Drag-and-drop inventory slot management
 
@@ -328,7 +330,11 @@ src/nmstoolkit/
 │   ├── exml_parser.py           # EXML → Python dicts (products, substances, tech, recipes, seasons, locale)
 │   ├── game_catalogue.py        # GameCatalogue: immutable container for all parsed game data
 │   ├── icon_cache.py            # DDS → PNG conversion and disk caching
-│   └── icon_extractor.py        # PAK icon extraction + item-to-DDS mapping
+│   ├── icon_extractor.py        # PAK icon extraction + item-to-DDS mapping
+│   ├── mesh_data.py             # Domain model: Mesh, SceneNode, Transform
+│   ├── geometry_parser.py       # Binary GEOMETRY.MBIN parser (half-float, packed normals)
+│   ├── scene_parser.py          # SCENE EXML → SceneNode tree
+│   └── corvette_mesh_pipeline.py # Mesh extraction + caching orchestration
 │
 ├── adapters/                    # External integrations
 │   ├── hgpak_adapter.py         # PAK reading via hgpaktool
@@ -340,9 +346,14 @@ src/nmstoolkit/
 │   │   ├── exosuit_tab.py
 │   │   ├── ships_tab.py
 │   │   ├── corvette_tab.py      # Corvette builder with 2D/3D toggle
-│   │   ├── expedition_tab.py    # Expedition progress and replay
+│   │   ├── companions_tab.py    # Pet editing with gene trait modification
+│   │   ├── settlements_tab.py   # Settlement stats with seed-based ownership
+│   │   ├── bases_tab.py         # Base storage + part budget table
+│   │   ├── fossils_tab.py       # Fossil pieces and base displays
+│   │   ├── expedition_tab.py    # Expedition progress, rewards, and replay
+│   │   ├── discoveries_tab.py   # Discovery browser with address fallback
 │   │   ├── recipe_finder_tab.py
-│   │   └── ...                  # 15+ tabs total
+│   │   └── ...                  # 20 tabs total
 │   └── widgets/
 │       ├── inventory_grid.py    # Reusable inventory grid with drag-and-drop
 │       ├── slot_editor.py       # Single-slot detail editor
