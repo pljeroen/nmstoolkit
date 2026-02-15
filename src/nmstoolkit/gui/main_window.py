@@ -64,6 +64,14 @@ def _user_cache_dir() -> Path:
     return cache
 
 
+def _external_tools_dir() -> Path:
+    """Return directory for external tool binaries (MBINCompiler, etc.)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "ExternalTools"
+    return DATA_DIR / "ExternalTools"
+
+
 def _detect_save_dirs() -> List[Path]:
     """Return candidate NMS save directories that exist on this system."""
     candidates = []
@@ -261,6 +269,7 @@ class MainWindow(QMainWindow):
 
         tools_menu = menu.addMenu("&Tools")
         tools_menu.addAction("Extract Game &Icons...", self._on_extract_icons)
+        tools_menu.addAction("External &Dependencies...", self._on_external_deps)
 
     # ------------------------------------------------------------------
     # Icon extraction
@@ -444,11 +453,24 @@ class MainWindow(QMainWindow):
             "Icons will load automatically on next startup."
         )
 
+    def _on_external_deps(self):
+        """Open the external dependencies management dialog."""
+        from nmstoolkit.gui.dialogs.external_deps_dialog import ExternalDepsDialog
+
+        dialog = ExternalDepsDialog(
+            external_tools_dir=_external_tools_dir(), parent=self
+        )
+        dialog.exec()
+
     @staticmethod
     def _find_mbin_compiler(pak_dir: Path) -> Path | None:
-        """Locate MBINCompiler — check common locations."""
+        """Locate MBINCompiler — check ExternalTools first, then common locations."""
         import shutil
+        ext_dir = _external_tools_dir() / "MBINCompiler"
         candidates = [
+            ext_dir / "MBINCompiler.exe",
+            ext_dir / "MBINCompiler",
+            ext_dir / "MBINCompiler-linux",
             Path("/tmp/nms_exml/MBINCompiler"),
             pak_dir / "MBINCompiler.exe",
             pak_dir / "MBINCompiler",
