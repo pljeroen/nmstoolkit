@@ -8,8 +8,8 @@ import lz4.block
 import pytest
 
 # Path to real save files for integration tests
-SAVE_DIR = Path("/home/jeroen/dev/NMSSaveEditor/st_76561198078575175")
-OLD_EDITOR_DB = Path("/home/jeroen/dev/NMSSaveEditor/NMSSaveEditor/nomanssave/db")
+SAVE_DIR = Path("/media/sf_tdd/st_76561198078575175")
+DATA_DIR = Path(__file__).resolve().parent.parent / "src" / "nmstoolkit" / "data"
 
 # Minimal valid JSON for test saves
 MINIMAL_SAVE_JSON = {"F2P": 1234, "8>q": "Win|Final", "XTp": "Main"}
@@ -66,7 +66,7 @@ def real_account_path():
 @pytest.fixture
 def key_map_path():
     """Path to jsonmap.txt."""
-    path = OLD_EDITOR_DB / "jsonmap.txt"
+    path = DATA_DIR / "jsonmap.txt"
     if not path.exists():
         pytest.skip("Key map file not available")
     return path
@@ -75,7 +75,7 @@ def key_map_path():
 @pytest.fixture
 def account_key_map_path():
     """Path to jsonmapac.txt."""
-    path = OLD_EDITOR_DB / "jsonmapac.txt"
+    path = DATA_DIR / "jsonmapac.txt"
     if not path.exists():
         pytest.skip("Account key map file not available")
     return path
