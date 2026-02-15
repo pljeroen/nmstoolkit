@@ -131,6 +131,13 @@ class IconProvider:
         if dds_path:
             return dds_path
 
+        # 1b. Try without ^ prefix in icon_map (catalogue stores bare IDs)
+        bare_id = item_id.lstrip("^") if item_id.startswith("^") else ""
+        if bare_id:
+            dds_path = self._icon_map.get(bare_id, "")
+            if dds_path:
+                return dds_path
+
         # 2. Procedural item fallback: strip #nnnnn suffix
         if "#" in item_id:
             base_id = item_id.split("#")[0]
@@ -138,15 +145,19 @@ class IconProvider:
             if dds_path:
                 return dds_path
 
-        # 3. Catalogue lookup (exact)
+        # 3. Catalogue lookup (exact, then without ^ prefix)
         if self._catalogue is not None:
             item = self._catalogue.find_item(item_id)
+            if item is None and bare_id:
+                item = self._catalogue.find_item(bare_id)
             if item is not None:
                 return item.get("icon", "")
             # Try base ID in catalogue too (procedural)
             if "#" in item_id:
                 base_id = item_id.split("#")[0]
                 item = self._catalogue.find_item(base_id)
+                if item is None and base_id.startswith("^"):
+                    item = self._catalogue.find_item(base_id.lstrip("^"))
                 if item is not None:
                     return item.get("icon", "")
 
