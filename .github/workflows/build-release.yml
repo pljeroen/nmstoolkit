@@ -27,7 +27,7 @@ jobs:
         shell: cmd
         run: |
           python -m nuitka ^
-            --onefile ^
+            --standalone ^
             --windows-console-mode=disable ^
             --output-filename=nmstoolkit.exe ^
             --include-data-dir=src/nmstoolkit/data=nmstoolkit/data ^
@@ -37,11 +37,16 @@ jobs:
             --assume-yes-for-downloads ^
             src/nmstoolkit/app.py
 
+      - name: Package zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path app.dist\* -DestinationPath nmstoolkit-windows.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: nmstoolkit-windows
-          path: nmstoolkit.exe
+          path: nmstoolkit-windows.zip
 
   create-release:
     needs: build-windows
@@ -55,7 +60,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: nmstoolkit.exe
+          files: nmstoolkit-windows.zip
           generate_release_notes: true
           prerelease: true
           name: "${{ github.ref_name }} (beta)"
