@@ -1,12 +1,18 @@
 """Discoveries editor tab."""
 
+import json
+import math
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -25,10 +31,99 @@ def _format_address(address) -> str:
     return str(address) if address else ""
 
 
+def _extract_voxels(addr):
+    """Extract (x, y, z) voxel coordinates from a galactic address integer."""
+    if not isinstance(addr, int):
+        return (0, 0, 0)
+    voxel_x = (addr >> 19) & 0xFFF
+    voxel_y = (addr >> 31) & 0xFF
+    voxel_z = (addr >> 39) & 0xFFF
+    return (voxel_x, voxel_y, voxel_z)
+
+
+def _distance(addr_a, addr_b):
+    """Euclidean distance between two galactic addresses."""
+    ax, ay, az = _extract_voxels(addr_a)
+    bx, by, bz = _extract_voxels(addr_b)
+    return math.sqrt((bx - ax) ** 2 + (by - ay) ** 2 + (bz - az) ** 2)
+
+
+def _total_path_distance(addrs):
+    """Total distance of the polyline through addresses in order."""
+    total = 0.0
+    for i in range(len(addrs) - 1):
+        total += _distance(addrs[i], addrs[i + 1])
+    return total
+
+
+def _optimize_path(addrs):
+    """Reorder addresses to minimize total path length.
+
+    Uses nearest-neighbor heuristic followed by 2-opt improvement.
+    Handles up to ~1000 points in a few seconds with stdlib only.
+    """
+    n = len(addrs)
+    if n <= 2:
+        return list(addrs)
+
+    # Pre-compute voxel coordinates
+    coords = [_extract_voxels(a) for a in addrs]
+
+    def dist_sq(i, j):
+        cx, cy, cz = coords[i]
+        dx, dy, dz = coords[j]
+        return (dx - cx) ** 2 + (dy - cy) ** 2 + (dz - cz) ** 2
+
+    def dist(i, j):
+        return math.sqrt(dist_sq(i, j))
+
+    # Phase 1: Nearest Neighbor
+    visited = [False] * n
+    order = [0]
+    visited[0] = True
+    for _ in range(n - 1):
+        last = order[-1]
+        best_idx = -1
+        best_d = float("inf")
+        for j in range(n):
+            if not visited[j]:
+                d = dist_sq(last, j)
+                if d < best_d:
+                    best_d = d
+                    best_idx = j
+        order.append(best_idx)
+        visited[best_idx] = True
+
+    # Phase 2: 2-opt improvement (up to 10 passes)
+    improved = True
+    passes = 0
+    while improved and passes < 10:
+        improved = False
+        passes += 1
+        for i in range(n - 1):
+            for j in range(i + 2, n):
+                # Current edges: (i, i+1) and (j, j+1 if exists)
+                d_old = dist(order[i], order[i + 1])
+                d_new = dist(order[i], order[j])
+                if j + 1 < n:
+                    d_old += dist(order[j], order[j + 1])
+                    d_new += dist(order[i + 1], order[j + 1])
+                else:
+                    # j is the last element — only one edge to consider
+                    pass
+                if d_new < d_old:
+                    # Reverse segment [i+1..j]
+                    order[i + 1 : j + 1] = reversed(order[i + 1 : j + 1])
+                    improved = True
+
+    return [addrs[i] for i in order]
+
+
 class DiscoveriesTab(QWidget):
     def __init__(self):
         super().__init__()
         self._data = None
+        self._psd = None
         self._records = []
         self._build_ui()
 
@@ -72,6 +167,36 @@ class DiscoveriesTab(QWidget):
         self._table.setSortingEnabled(True)
         layout.addWidget(self._table)
 
+        # Constellation management
+        const_group = QGroupBox("Constellations (Star Map Travel Lines)")
+        const_layout = QVBoxLayout(const_group)
+        self._const_count_label = QLabel("Visited systems: —")
+        const_layout.addWidget(self._const_count_label)
+
+        btn_layout = QHBoxLayout()
+        self._const_optimize_btn = QPushButton("Optimize Paths")
+        self._const_optimize_btn.setToolTip(
+            "Reorder visited systems to minimize total travel line length"
+        )
+        self._const_optimize_btn.clicked.connect(self._on_constellation_optimize)
+        btn_layout.addWidget(self._const_optimize_btn)
+
+        self._const_reset_btn = QPushButton("Reset")
+        self._const_reset_btn.setToolTip("Clear all constellation lines from star map")
+        self._const_reset_btn.clicked.connect(self._on_constellation_reset)
+        btn_layout.addWidget(self._const_reset_btn)
+
+        self._const_backup_btn = QPushButton("Backup")
+        self._const_backup_btn.clicked.connect(self._on_constellation_backup)
+        btn_layout.addWidget(self._const_backup_btn)
+
+        self._const_restore_btn = QPushButton("Restore")
+        self._const_restore_btn.clicked.connect(self._on_constellation_restore)
+        btn_layout.addWidget(self._const_restore_btn)
+
+        const_layout.addLayout(btn_layout)
+        layout.addWidget(const_group)
+
     def set_data(self, discovery_data: dict):
         self._data = discovery_data
         store = discovery_data.get("DiscoveryData-v1", {})
@@ -93,6 +218,64 @@ class DiscoveriesTab(QWidget):
         self._type_filter.blockSignals(False)
 
         self._apply_filter()
+
+    def set_player_state(self, psd: dict):
+        """Accept PlayerStateData for constellation management."""
+        self._psd = psd
+        self._update_constellation_label()
+
+    def _update_constellation_label(self):
+        if self._psd is None:
+            self._const_count_label.setText("Visited systems: —")
+            return
+        vs = self._psd.get("VisitedSystems", [])
+        count = len(vs)
+        if count > 1:
+            dist = _total_path_distance(vs)
+            self._const_count_label.setText(
+                f"Visited systems: {count} ({dist:,.0f} voxel units total path length)"
+            )
+        else:
+            self._const_count_label.setText(f"Visited systems: {count}")
+
+    def _on_constellation_reset(self):
+        if self._psd is None:
+            return
+        self._psd["VisitedSystems"] = []
+        self._update_constellation_label()
+
+    def _on_constellation_optimize(self):
+        if self._psd is None:
+            return
+        vs = self._psd.get("VisitedSystems", [])
+        if len(vs) <= 2:
+            return
+        self._psd["VisitedSystems"] = _optimize_path(vs)
+        self._update_constellation_label()
+
+    def _on_constellation_backup(self):
+        if self._psd is None:
+            return
+        vs = self._psd.get("VisitedSystems", [])
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Backup Constellations", "constellations.json", "JSON files (*.json)"
+        )
+        if path:
+            with open(path, "w") as f:
+                json.dump(vs, f, indent=2)
+
+    def _on_constellation_restore(self):
+        if self._psd is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Restore Constellations", "", "JSON files (*.json)"
+        )
+        if path:
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                self._psd["VisitedSystems"] = data
+                self._update_constellation_label()
 
     def _apply_filter(self):
         type_filter = self._type_filter.currentText()

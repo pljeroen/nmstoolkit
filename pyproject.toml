@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nmstoolkit"
-version = "0.2.6-beta"
+version = "0.2.7-beta"
 description = "No Man's Sky save editor and toolkit"
 readme = "README.md"
 license = "MIT"

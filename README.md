@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-600%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-610%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -32,6 +32,7 @@ No Man's Sky save editor and toolkit.
 - Fish finder reference guide
 - Milestone and reputation tracking (Gek, Vy'keen, Korvax, guilds)
 - Discovery browser with hex address fallback for unnamed entries
+- Constellation editor — optimize, reset, backup/restore star map travel lines (NN + 2-opt path optimizer)
 - Raw JSON editor for direct save data manipulation
 - Game icon extraction and corvette model extraction from PAK files
 - Drag-and-drop inventory slot management with adjacency optimization
@@ -357,7 +358,7 @@ src/nmstoolkit/
 │   │   ├── bases_tab.py         # Base storage, budget table, library, export/import
 │   │   ├── fossils_tab.py       # Fossil pieces and base displays
 │   │   ├── expedition_tab.py    # Expedition progress, rewards, Twitch/Platform, replay
-│   │   ├── discoveries_tab.py   # Discovery browser with address fallback
+│   │   ├── discoveries_tab.py   # Discovery browser, constellation optimizer
 │   │   ├── recipe_finder_tab.py
 │   │   ├── milestones_tab.py
 │   │   ├── account_tab.py

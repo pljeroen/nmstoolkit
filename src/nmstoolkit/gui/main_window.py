@@ -820,6 +820,7 @@ class MainWindow(QMainWindow):
         self._fossils_tab.set_data(psd)
         self._settlements_tab.set_data(psd)
         self._discoveries_tab.set_data(sf.data.get("DiscoveryManagerData", {}))
+        self._discoveries_tab.set_player_state(psd)
         self._milestones_tab.set_data(psd)
         self._expedition_tab.set_data(
             psd, common_state=sf.data.get("CommonStateData", {})

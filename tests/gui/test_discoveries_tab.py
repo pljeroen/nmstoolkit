@@ -4,8 +4,10 @@ R-DIS-01: Discovered systems display their names.
 R-DIS-02: Discovered planets display their names.
 R-DIS-03: Discovered fauna/flora display their names.
 R-DIS-04: Discovery entries without names show a sensible fallback.
+R-CONST-01: Constellation reset/backup/optimize.
 """
 
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -219,3 +221,184 @@ class TestUndiscoveredFilter:
         addr_text = tab._table.item(0, 3).text()
         # Should contain decoded galactic address info, not just hex
         assert "Planet" in addr_text or "System" in addr_text or "Region" in addr_text
+
+
+def _encode_galactic_address(voxel_x, voxel_y, voxel_z, system=1, planet=0):
+    """Encode voxel coordinates into a galactic address integer."""
+    addr = system & 0xFFFF
+    addr |= (planet & 0x7) << 16
+    addr |= (voxel_x & 0xFFF) << 19
+    addr |= (voxel_y & 0xFF) << 31
+    addr |= (voxel_z & 0xFFF) << 39
+    return addr
+
+
+class TestConstellationWidgets:
+    """R-CONST-01: Constellation UI elements exist."""
+
+    def test_constellation_group_exists(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        tab = DiscoveriesTab()
+        assert hasattr(tab, "_const_reset_btn")
+        assert hasattr(tab, "_const_optimize_btn")
+        assert hasattr(tab, "_const_backup_btn")
+        assert hasattr(tab, "_const_restore_btn")
+        assert hasattr(tab, "_const_count_label")
+
+
+class TestConstellationReset:
+    """R-CONST-01: Reset clears VisitedSystems."""
+
+    def test_reset_clears_visited_systems(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        psd = {"VisitedSystems": [111, 222, 333]}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+        tab._on_constellation_reset()
+        assert psd["VisitedSystems"] == []
+
+    def test_reset_updates_count_label(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        psd = {"VisitedSystems": [111, 222]}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+        assert "2" in tab._const_count_label.text()
+        tab._on_constellation_reset()
+        assert "0" in tab._const_count_label.text()
+
+
+class TestConstellationBackupRestore:
+    """R-CONST-01: Backup and restore VisitedSystems."""
+
+    def test_backup_and_restore(self, tmp_path, monkeypatch):
+        from nmstoolkit.gui.tabs import discoveries_tab
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        original = [111, 222, 333]
+        psd = {"VisitedSystems": list(original)}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+
+        # Monkeypatch file dialog to return tmp_path file
+        backup_path = str(tmp_path / "constellations.json")
+        monkeypatch.setattr(
+            "nmstoolkit.gui.tabs.discoveries_tab.QFileDialog.getSaveFileName",
+            lambda *a, **kw: (backup_path, ""),
+        )
+        tab._on_constellation_backup()
+        assert (tmp_path / "constellations.json").exists()
+
+        # Clear and restore
+        psd["VisitedSystems"] = []
+        monkeypatch.setattr(
+            "nmstoolkit.gui.tabs.discoveries_tab.QFileDialog.getOpenFileName",
+            lambda *a, **kw: (backup_path, ""),
+        )
+        tab._on_constellation_restore()
+        assert psd["VisitedSystems"] == original
+
+
+class TestConstellationOptimize:
+    """R-CONST-01: Optimize reorders VisitedSystems for minimal path length."""
+
+    def test_optimize_reduces_total_distance(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        # Create a deliberately bad order: zigzag across space
+        # Points along a line: (0,0,0), (100,0,0), (200,0,0), (300,0,0)
+        # but ordered: 0, 200, 100, 300 (zigzag)
+        addrs = [
+            _encode_galactic_address(0, 0, 0, system=1),
+            _encode_galactic_address(200, 0, 0, system=2),
+            _encode_galactic_address(100, 0, 0, system=3),
+            _encode_galactic_address(300, 0, 0, system=4),
+        ]
+        psd = {"VisitedSystems": list(addrs)}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+
+        from nmstoolkit.gui.tabs.discoveries_tab import _total_path_distance
+        dist_before = _total_path_distance(psd["VisitedSystems"])
+
+        tab._on_constellation_optimize()
+
+        dist_after = _total_path_distance(psd["VisitedSystems"])
+        assert dist_after <= dist_before
+
+    def test_optimize_preserves_all_systems(self):
+        """Optimize must not lose or duplicate any system."""
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        addrs = [
+            _encode_galactic_address(x, 0, 0, system=i + 1)
+            for i, x in enumerate([50, 300, 150, 0, 200])
+        ]
+        psd = {"VisitedSystems": list(addrs)}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+        tab._on_constellation_optimize()
+
+        assert sorted(psd["VisitedSystems"]) == sorted(addrs)
+        assert len(psd["VisitedSystems"]) == 5
+
+    def test_optimize_handles_empty(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        psd = {"VisitedSystems": []}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+        tab._on_constellation_optimize()
+        assert psd["VisitedSystems"] == []
+
+    def test_optimize_handles_single(self):
+        from nmstoolkit.gui.tabs.discoveries_tab import DiscoveriesTab
+
+        addr = _encode_galactic_address(100, 50, 25, system=1)
+        psd = {"VisitedSystems": [addr]}
+        tab = DiscoveriesTab()
+        tab.set_data({})
+        tab.set_player_state(psd)
+        tab._on_constellation_optimize()
+        assert psd["VisitedSystems"] == [addr]
+
+
+class TestPathDistanceFunction:
+    """Unit tests for the path distance calculation."""
+
+    def test_total_distance_collinear(self):
+        """Points on a line: total distance = end-to-end distance."""
+        from nmstoolkit.gui.tabs.discoveries_tab import _total_path_distance
+
+        addrs = [
+            _encode_galactic_address(0, 0, 0, system=1),
+            _encode_galactic_address(100, 0, 0, system=2),
+            _encode_galactic_address(200, 0, 0, system=3),
+        ]
+        dist = _total_path_distance(addrs)
+        # Should be ~200 (100 + 100) in voxel X units
+        assert 195 < dist < 205
+
+    def test_total_distance_zigzag_longer(self):
+        """Zigzag order should be longer than sorted order."""
+        from nmstoolkit.gui.tabs.discoveries_tab import _total_path_distance
+
+        sorted_addrs = [
+            _encode_galactic_address(0, 0, 0, system=1),
+            _encode_galactic_address(100, 0, 0, system=2),
+            _encode_galactic_address(200, 0, 0, system=3),
+        ]
+        zigzag_addrs = [
+            _encode_galactic_address(0, 0, 0, system=1),
+            _encode_galactic_address(200, 0, 0, system=3),
+            _encode_galactic_address(100, 0, 0, system=2),
+        ]
+        assert _total_path_distance(zigzag_addrs) > _total_path_distance(sorted_addrs)
