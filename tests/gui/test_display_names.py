@@ -3,6 +3,9 @@
 When catalogue.find_item() returns None but the item_id is a locale key,
 _get_item_name() should resolve it via catalogue.locale before falling
 through to items.json or raw ID.
+
+Also tests R-FOS-01: Fossil items with caret prefix resolve display names
+via catalogue using bare IDs.
 """
 
 import os
@@ -80,3 +83,63 @@ class TestLocaleResolutionFallback:
         set_catalogue(catalogue_with_locale)
         result = _get_item_name("^YOURSUIT_BUBBLE_NAME")
         assert result == "Bubble Cluster"
+
+
+class TestCaretPrefixCatalogueName:
+    """R-FOS-01: Items with ^ prefix resolve display names via catalogue bare IDs."""
+
+    def test_fossil_caret_resolves_from_catalogue(self):
+        """^FOS_QUAD should find FOS_QUAD in catalogue and return display_name."""
+        cat = GameCatalogue(
+            products=[{
+                "id": "FOS_QUAD",
+                "name": "FOS_QUAD_NAME",
+                "display_name": "Quadruped Fossil Display",
+            }],
+            substances=[],
+            technologies=[],
+            locale={},
+        )
+        set_catalogue(cat)
+        assert _get_item_name("^FOS_QUAD") == "Quadruped Fossil Display"
+
+    def test_building_part_caret_resolves(self):
+        """^BASE_BEAMSTONE should find BASE_BEAMSTONE in catalogue."""
+        cat = GameCatalogue(
+            products=[{
+                "id": "BASE_BEAMSTONE",
+                "name": "BASE_BEAMSTONE_NAME",
+                "display_name": "Light Fissure",
+            }],
+            substances=[],
+            technologies=[],
+            locale={},
+        )
+        set_catalogue(cat)
+        assert _get_item_name("^BASE_BEAMSTONE") == "Light Fissure"
+
+    def test_procedural_fossil_caret_resolves(self):
+        """^PROC_FOSS#12345 should find PROC_FOSS in catalogue after stripping # suffix."""
+        cat = GameCatalogue(
+            products=[{
+                "id": "PROC_FOSS",
+                "name": "PROC_FOSS_NAME",
+                "display_name": "Fossil Sample",
+            }],
+            substances=[],
+            technologies=[],
+            locale={},
+        )
+        set_catalogue(cat)
+        assert _get_item_name("^PROC_FOSS#12345") == "Fossil Sample"
+
+    def test_bare_id_still_works(self):
+        """Items without ^ should still resolve normally."""
+        cat = GameCatalogue(
+            products=[{"id": "FUEL1", "name": "FUEL1_NAME", "display_name": "Carbon"}],
+            substances=[],
+            technologies=[],
+            locale={},
+        )
+        set_catalogue(cat)
+        assert _get_item_name("FUEL1") == "Carbon"

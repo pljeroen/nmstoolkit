@@ -105,12 +105,17 @@ def _get_item_name(item_id: str) -> str:
 
     if _CATALOGUE is not None:
         item = _CATALOGUE.find_item(item_id)
+        # Try without ^ prefix (catalogue stores bare IDs)
+        if item is None and item_id.startswith("^"):
+            item = _CATALOGUE.find_item(item_id[1:])
         if item is not None:
             return item.get("display_name", item.get("name", item_id))
         # Procedural items: strip #nnnnn suffix and try base type
         if "#" in item_id:
             base_id = item_id.split("#")[0]
             item = _CATALOGUE.find_item(base_id)
+            if item is None and base_id.startswith("^"):
+                item = _CATALOGUE.find_item(base_id[1:])
             if item is not None:
                 return item.get("display_name", item.get("name", base_id))
         # Locale fallback: resolve locale keys not in product/substance/technology tables
