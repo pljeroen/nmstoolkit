@@ -107,6 +107,82 @@ class TestCompanionsTabDescriptors:
         assert pet["EggModified"] is True
 
 
+class TestDescriptorsOverflow:
+    """R-GEN-04: All traits display correctly when count exceeds 8."""
+
+    def test_11_descriptors_all_editable(self, qapp):
+        """A pet with 11 descriptors should create 11 edit widgets."""
+        tab = CompanionsTab()
+        descs = [f"^_PART_{i}" for i in range(11)]
+        pet = _make_pet(descriptors=descs)
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert len(tab._descriptor_edits) >= 11
+
+    def test_20_descriptors_all_editable(self, qapp):
+        """Even 20 descriptors should all be accessible."""
+        tab = CompanionsTab()
+        descs = [f"^_DESC_{i}" for i in range(20)]
+        pet = _make_pet(descriptors=descs)
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert len(tab._descriptor_edits) >= 20
+
+    def test_descriptor_9_value_correct(self, qapp):
+        """The 9th descriptor (index 8) should be readable."""
+        tab = CompanionsTab()
+        descs = [f"^_PART_{i}" for i in range(11)]
+        pet = _make_pet(descriptors=descs)
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert tab._descriptor_edits[8].text() == "_PART_8"
+
+
+class TestDescriptorAddRemove:
+    """R-GEN-02, R-GEN-03: Add and remove gene traits."""
+
+    def test_add_button_exists(self, qapp):
+        tab = CompanionsTab()
+        assert hasattr(tab, "_add_desc_btn")
+
+    def test_remove_button_exists(self, qapp):
+        tab = CompanionsTab()
+        assert hasattr(tab, "_remove_desc_btn")
+
+    def test_add_descriptor(self, qapp):
+        tab = CompanionsTab()
+        pet = _make_pet(descriptors=["^_FWINGS_02", "^_MOTHBODY_01"])
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        initial_count = len(pet["Descriptors"])
+        tab._on_add_descriptor()
+        assert len(pet["Descriptors"]) == initial_count + 1
+
+    def test_remove_descriptor(self, qapp):
+        tab = CompanionsTab()
+        pet = _make_pet(descriptors=["^_FWINGS_02", "^_MOTHBODY_01", "^_BWINGS_04"])
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        initial_count = len(pet["Descriptors"])
+        tab._on_remove_descriptor()
+        assert len(pet["Descriptors"]) == initial_count - 1
+
+    def test_remove_from_empty_no_crash(self, qapp):
+        tab = CompanionsTab()
+        pet = _make_pet()
+        pet["Descriptors"] = []  # Override after creation to avoid falsy default
+        psd = {"Pets": [pet]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        tab._on_remove_descriptor()
+        assert len(pet["Descriptors"]) == 0
+
+
 class TestCompanionsTabEditWriteBack:
     """Test that edits write back to the data dict."""
 

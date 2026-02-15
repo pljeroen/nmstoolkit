@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -180,23 +181,36 @@ class CompanionsTab(QWidget):
 
         right_layout.addWidget(traits_group)
 
-        # Descriptors (editable gene traits)
+        # Descriptors (editable gene traits) — dynamic list, scrollable
         desc_group = QGroupBox("Descriptors (Gene Traits)")
-        desc_layout = QVBoxLayout(desc_group)
+        desc_outer = QVBoxLayout(desc_group)
         self._descriptors_label = QLabel("—")
         self._descriptors_label.setWordWrap(True)
         self._descriptors_label.setStyleSheet("font-size: 11px; color: #aaa;")
-        desc_layout.addWidget(self._descriptors_label)
+        desc_outer.addWidget(self._descriptors_label)
+
+        # Scrollable container for descriptor edits
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(120)
+        self._desc_container = QWidget()
+        self._desc_layout = QVBoxLayout(self._desc_container)
+        self._desc_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(self._desc_container)
+        desc_outer.addWidget(scroll)
         self._descriptor_edits = []
-        for i in range(8):  # Max 8 descriptor slots
-            edit = QLineEdit()
-            edit.setPlaceholderText(f"Descriptor {i + 1}")
-            edit.editingFinished.connect(
-                lambda idx=i: self._on_descriptor_changed(idx)
-            )
-            desc_layout.addWidget(edit)
-            self._descriptor_edits.append(edit)
-            edit.setVisible(False)  # Hidden until populated
+
+        # Add/Remove buttons
+        btn_row = QHBoxLayout()
+        self._add_desc_btn = QPushButton("Add Trait")
+        self._add_desc_btn.clicked.connect(self._on_add_descriptor)
+        self._remove_desc_btn = QPushButton("Remove Last")
+        self._remove_desc_btn.clicked.connect(self._on_remove_descriptor)
+        btn_row.addWidget(self._add_desc_btn)
+        btn_row.addWidget(self._remove_desc_btn)
+        btn_row.addStretch()
+        desc_outer.addLayout(btn_row)
+
         right_layout.addWidget(desc_group)
 
         right_layout.addStretch()
@@ -288,7 +302,7 @@ class CompanionsTab(QWidget):
             spin.setValue(moods[i] if i < len(moods) and isinstance(moods[i], (int, float)) else 0)
             spin.blockSignals(False)
 
-        # Descriptors
+        # Descriptors — rebuild dynamic list
         descriptors = pet.get("Descriptors", [])
         active_descs = [str(d).lstrip("^") for d in descriptors if d and str(d).strip("^")]
         if active_descs:
@@ -296,18 +310,63 @@ class CompanionsTab(QWidget):
         else:
             self._descriptors_label.setText("None")
 
-        for i, edit in enumerate(self._descriptor_edits):
-            edit.blockSignals(True)
-            if i < len(active_descs):
-                edit.setText(active_descs[i])
-                edit.setVisible(True)
-            elif i < len(descriptors):
-                edit.setText("")
-                edit.setVisible(True)
-            else:
-                edit.setText("")
-                edit.setVisible(i < len(active_descs) + 1)  # Show one empty for adding
-            edit.blockSignals(False)
+        self._rebuild_descriptor_edits(active_descs)
+
+    def _rebuild_descriptor_edits(self, active_descs):
+        """Rebuild the dynamic descriptor edit list to match data."""
+        # Remove old edits
+        for edit in self._descriptor_edits:
+            edit.setParent(None)
+        self._descriptor_edits.clear()
+
+        # Create one edit per active descriptor
+        for i, desc in enumerate(active_descs):
+            edit = QLineEdit()
+            edit.setPlaceholderText(f"Descriptor {i + 1}")
+            edit.setText(desc)
+            edit.editingFinished.connect(
+                lambda idx=i: self._on_descriptor_changed(idx)
+            )
+            self._desc_layout.addWidget(edit)
+            self._descriptor_edits.append(edit)
+
+    def _on_add_descriptor(self):
+        """Add a new empty descriptor to the current companion."""
+        pet = self._current_companion()
+        if pet is None:
+            return
+        descriptors = pet.get("Descriptors", [])
+        descriptors.append("^")
+        pet["Descriptors"] = descriptors
+        pet["EggModified"] = True
+        self._egg_modified_check.blockSignals(True)
+        self._egg_modified_check.setChecked(True)
+        self._egg_modified_check.blockSignals(False)
+        # Rebuild UI
+        active_descs = [str(d).lstrip("^") for d in descriptors if d and str(d).strip("^")]
+        self._descriptors_label.setText(f"{len(active_descs)} gene traits")
+        # Also show the empty slot for editing
+        all_descs = [str(d).lstrip("^") for d in descriptors]
+        self._rebuild_descriptor_edits(all_descs)
+
+    def _on_remove_descriptor(self):
+        """Remove the last descriptor from the current companion."""
+        pet = self._current_companion()
+        if pet is None:
+            return
+        descriptors = pet.get("Descriptors", [])
+        if not descriptors:
+            return
+        descriptors.pop()
+        pet["Descriptors"] = descriptors
+        pet["EggModified"] = True
+        self._egg_modified_check.blockSignals(True)
+        self._egg_modified_check.setChecked(True)
+        self._egg_modified_check.blockSignals(False)
+        # Rebuild UI
+        active_descs = [str(d).lstrip("^") for d in descriptors if d and str(d).strip("^")]
+        self._descriptors_label.setText(f"{len(active_descs)} gene traits")
+        self._rebuild_descriptor_edits(active_descs)
 
     def _on_name_changed(self):
         pet = self._current_companion()
