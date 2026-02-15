@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-600%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -22,6 +22,8 @@ No Man's Sky save editor and toolkit.
 - Squadron, frigate, and corvette management
 - Settlement editing with seed-based ownership, stat write-back, production output, race/address/buildings
 - Base part budget table with per-base part counts, wire counts, and sortable columns
+- Base library — save, browse, and swap bases from a persistent local library
+- Base export/import as portable JSON files
 - Fossil tracker — pieces across inventories and assembled displays in bases
 - Expedition progress, reward filter by expedition, unlock all rewards, offline replay, Twitch/Platform rewards
 - Account data editing (account-wide settings)
@@ -352,7 +354,7 @@ src/nmstoolkit/
 │   │   ├── corvette_tab.py      # Corvette builder with 2D/3D toggle
 │   │   ├── companions_tab.py    # Pet editing with gene trait modification
 │   │   ├── settlements_tab.py   # Settlement stats, production, race/address/buildings
-│   │   ├── bases_tab.py         # Base storage + part budget table
+│   │   ├── bases_tab.py         # Base storage, budget table, library, export/import
 │   │   ├── fossils_tab.py       # Fossil pieces and base displays
 │   │   ├── expedition_tab.py    # Expedition progress, rewards, Twitch/Platform, replay
 │   │   ├── discoveries_tab.py   # Discovery browser with address fallback

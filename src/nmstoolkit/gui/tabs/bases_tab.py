@@ -1,6 +1,9 @@
 """Bases & Storage editor tab."""
 
 import json
+import re
+import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -11,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListWidget,
     QPushButton,
     QTabWidget,
     QTableWidget,
@@ -20,6 +24,35 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
+
+_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def _base_library_dir() -> Path:
+    """Return persistent base library directory."""
+    import sys
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).parent
+    else:
+        base = _DATA_DIR
+    lib_dir = base / "base_library"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    return lib_dir
+
+
+def _scan_library(lib_dir: Path) -> list:
+    """Scan library dir for saved bases. Returns [(path, name, part_count), ...]."""
+    results = []
+    for p in sorted(lib_dir.glob("*.json")):
+        try:
+            data = json.loads(p.read_text())
+            name = data.get("Name", p.stem)
+            objects = data.get("Objects", [])
+            part_count = len(objects) if isinstance(objects, list) else 0
+            results.append((p, name, part_count))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return results
 
 # Object IDs that count as electrical wires
 _WIRE_IDS = {"U_POWERLINE"}
@@ -162,6 +195,27 @@ class BasesTab(QWidget):
 
         layout.addWidget(budget_group)
 
+        # Base library
+        lib_group = QGroupBox("Base Library")
+        lib_layout = QVBoxLayout(lib_group)
+        self._library_list = QListWidget()
+        self._library_list.setMaximumHeight(150)
+        lib_layout.addWidget(self._library_list)
+
+        lib_btn_layout = QHBoxLayout()
+        self._lib_save_btn = QPushButton("Save Current")
+        self._lib_save_btn.clicked.connect(self._on_save_to_library)
+        lib_btn_layout.addWidget(self._lib_save_btn)
+        self._lib_load_btn = QPushButton("Load/Swap")
+        self._lib_load_btn.clicked.connect(self._on_load_from_library)
+        lib_btn_layout.addWidget(self._lib_load_btn)
+        self._lib_delete_btn = QPushButton("Delete")
+        self._lib_delete_btn.clicked.connect(self._on_delete_from_library)
+        lib_btn_layout.addWidget(self._lib_delete_btn)
+        lib_layout.addLayout(lib_btn_layout)
+
+        layout.addWidget(lib_group)
+
         # Storage chests (universal — not per-base)
         storage_label = QLabel("Global Storage (accessible from any base/freighter)")
         storage_label.setStyleSheet("color: #aaa; font-size: 11px; margin-top: 8px;")
@@ -233,6 +287,8 @@ class BasesTab(QWidget):
             self._base_combo.setCurrentIndex(0)
             self._on_base_selected(0)
 
+        self._refresh_library()
+
         # Populate chest inventories (these are global, not per-base)
         for key, name in CHEST_KEYS:
             inv = psd.get(key, {})
@@ -281,6 +337,57 @@ class BasesTab(QWidget):
             if combo_text.split(". ", 1)[-1] == clicked_name:
                 self._base_combo.setCurrentIndex(i)
                 break
+
+    def _refresh_library(self):
+        """Repopulate library list from disk."""
+        self._library_list.clear()
+        self._library_entries = []
+        lib_dir = _base_library_dir()
+        for path, name, part_count in _scan_library(lib_dir):
+            self._library_entries.append(path)
+            self._library_list.addItem(f"{name} ({part_count} parts)")
+
+    def _on_save_to_library(self):
+        """Save current base to library directory."""
+        index = self._base_combo.currentIndex()
+        data = self._get_export_data(index)
+        if not data:
+            return
+        name = data.get("Name", "base") or "base"
+        safe_name = re.sub(r"[^\w\-]", "_", name).strip("_")[:50]
+        timestamp = int(time.time())
+        filename = f"{safe_name}_{timestamp}.json"
+        lib_dir = _base_library_dir()
+        (lib_dir / filename).write_text(json.dumps(data, indent=2))
+        self._refresh_library()
+
+    def _on_load_from_library(self):
+        """Replace current base Objects with library entry's Objects."""
+        row = self._library_list.currentRow()
+        if row < 0 or row >= len(self._library_entries):
+            return
+        lib_path = self._library_entries[row]
+        try:
+            lib_data = json.loads(lib_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return
+        index = self._base_combo.currentIndex()
+        if index < 0 or index >= len(self._bases):
+            return
+        self._bases[index]["Objects"] = lib_data.get("Objects", [])
+        self.set_data(self._data)
+
+    def _on_delete_from_library(self):
+        """Delete selected library entry from disk."""
+        row = self._library_list.currentRow()
+        if row < 0 or row >= len(self._library_entries):
+            return
+        lib_path = self._library_entries[row]
+        try:
+            lib_path.unlink()
+        except OSError:
+            pass
+        self._refresh_library()
 
     def _get_export_data(self, index: int) -> dict:
         """Get exportable data for base at given index."""
