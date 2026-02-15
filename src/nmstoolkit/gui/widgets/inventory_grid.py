@@ -67,13 +67,24 @@ def set_icon_provider(provider):
 
 
 def _load_item_names():
-    """Load item ID -> name mapping from items.json (static fallback)."""
+    """Load item ID -> name mapping from items.json (static fallback).
+
+    items.json stores substance IDs with ^ prefix (e.g. ^FUEL1 -> Carbon)
+    but save data uses bare IDs (FUEL1). Index both forms so bare lookups work.
+    """
     items_path = DATA_DIR / "items.json"
     if not items_path.exists():
         return {}
     with open(items_path, "r", encoding="utf-8") as f:
         items = json.load(f)
-    return {item["id"]: item["name"] for item in items}
+    names = {}
+    for item in items:
+        item_id = item["id"]
+        name = item["name"]
+        names[item_id] = name
+        if item_id.startswith("^"):
+            names[item_id[1:]] = name
+    return names
 
 
 def _load_item_symbols():
@@ -100,16 +111,36 @@ _ITEM_SYMBOLS = None
 
 
 def _get_item_name(item_id: str) -> str:
-    """Resolve an item ID to a display name."""
+    """Resolve an item ID to a display name.
+
+    Priority: items.json (curated proper-case names) > catalogue display_name
+    (game locale is ALL CAPS) > catalogue locale fallback > raw ID.
+    """
     global _ITEM_NAMES
 
+    # 1. items.json has curated proper-case names — check first
+    if _ITEM_NAMES is None:
+        _ITEM_NAMES = _load_item_names()
+
+    name = _ITEM_NAMES.get(item_id)
+    if name:
+        return name
+    # Procedural items in items.json
+    if "#" in item_id:
+        base_id = item_id.split("#")[0]
+        name = _ITEM_NAMES.get(base_id)
+        if name:
+            return name
+
+    # 2. Catalogue display_name (ALL CAPS from game locale, title-cased)
     if _CATALOGUE is not None:
         item = _CATALOGUE.find_item(item_id)
-        # Try without ^ prefix (catalogue stores bare IDs)
         if item is None and item_id.startswith("^"):
             item = _CATALOGUE.find_item(item_id[1:])
         if item is not None:
-            return item.get("display_name", item.get("name", item_id))
+            display = item.get("display_name", item.get("name", ""))
+            if display:
+                return _title_case_name(display)
         # Procedural items: strip #nnnnn suffix and try base type
         if "#" in item_id:
             base_id = item_id.split("#")[0]
@@ -117,26 +148,28 @@ def _get_item_name(item_id: str) -> str:
             if item is None and base_id.startswith("^"):
                 item = _CATALOGUE.find_item(base_id[1:])
             if item is not None:
-                return item.get("display_name", item.get("name", base_id))
+                display = item.get("display_name", item.get("name", ""))
+                if display:
+                    return _title_case_name(display)
         # Locale fallback: resolve locale keys not in product/substance/technology tables
         bare = item_id.lstrip("^")
         locale_name = _CATALOGUE.locale.get(bare) or _CATALOGUE.locale.get(item_id)
         if locale_name:
-            return locale_name
+            return _title_case_name(locale_name)
 
-    if _ITEM_NAMES is None:
-        _ITEM_NAMES = _load_item_names()
-
-    name = _ITEM_NAMES.get(item_id)
-    if name:
-        return name
-    # Fallback for procedural items in items.json too
-    if "#" in item_id:
-        base_id = item_id.split("#")[0]
-        name = _ITEM_NAMES.get(base_id)
-        if name:
-            return name
     return item_id.lstrip("^") if item_id else "Empty"
+
+
+def _title_case_name(name: str) -> str:
+    """Convert ALL CAPS game names to title case, preserving special formatting.
+
+    'CARBON' -> 'Carbon', 'DI-HYDROGEN' -> 'Di-Hydrogen',
+    'METAL PLATING' -> 'Metal Plating'
+    """
+    if not name or not name.isupper():
+        return name
+    # str.title() handles spaces and hyphens correctly
+    return name.title()
 
 
 def _get_item_symbol(item_id: str) -> str:
