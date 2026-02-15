@@ -13,6 +13,15 @@ from PySide6.QtWidgets import (
 )
 
 
+def _format_address(address) -> str:
+    """Format a universe address as hex for readability."""
+    if isinstance(address, int):
+        return f"0x{address:X}"
+    if isinstance(address, str) and address:
+        return address
+    return str(address) if address else ""
+
+
 class DiscoveriesTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -96,12 +105,17 @@ class DiscoveriesTab(QWidget):
             owner = ows.get("USN", "")
             address = dd.get("UA", "")
 
+            # Fallback for unnamed discoveries
+            if not name:
+                addr_str = _format_address(address)
+                name = f"<unknown name> ({addr_str})" if addr_str else "<unknown name>"
+
             if type_filter != "All" and disc_type != type_filter:
                 continue
             if search_text and search_text not in name.lower() and search_text not in owner.lower():
                 continue
 
-            filtered.append((disc_type, name, owner, str(address)))
+            filtered.append((disc_type, name, owner, _format_address(address)))
 
         type_counts = {}
         for record in self._records:
@@ -118,7 +132,7 @@ class DiscoveriesTab(QWidget):
         self._table.setRowCount(min(len(filtered), 2000))
         for row, (disc_type, name, owner, address) in enumerate(filtered[:2000]):
             self._table.setItem(row, 0, QTableWidgetItem(disc_type))
-            self._table.setItem(row, 1, QTableWidgetItem(name if name else "—"))
+            self._table.setItem(row, 1, QTableWidgetItem(name))
             self._table.setItem(row, 2, QTableWidgetItem(owner if owner else "—"))
             self._table.setItem(row, 3, QTableWidgetItem(address))
         self._table.setSortingEnabled(True)
