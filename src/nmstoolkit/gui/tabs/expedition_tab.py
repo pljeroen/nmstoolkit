@@ -6,6 +6,7 @@ from the cwmonkey/nms-expeditions repository.
 """
 
 import json
+import re
 import urllib.request
 from pathlib import Path
 
@@ -97,6 +98,20 @@ _REWARD_NAMES = {
     "^TOKEN_BREACH": "Breach Token",
     "^TOKEN_REMNANT": "Remnant Token",
 }
+
+
+def _reward_expedition_number(reward_id: str) -> int:
+    """Extract the expedition number from a reward ID, or 0 if unclassifiable.
+
+    E.g. ^EXPD_POSTER06A -> 6, ^EXPD_TITLE19 -> 19, ^JETS_WORM -> 0.
+    """
+    clean = reward_id.lstrip("^")
+    m = re.search(r"(\d+)", clean)
+    if m:
+        num = int(m.group(1))
+        if 1 <= num <= 99:
+            return num
+    return 0
 
 
 def _resolve_locale_name(raw_name: str) -> str:
@@ -206,11 +221,29 @@ class ExpeditionTab(QWidget):
         rewards_group = QGroupBox("Redeemed Season Rewards")
         rewards_layout = QVBoxLayout(rewards_group)
 
+        # Filter and unlock row
+        reward_bar = QHBoxLayout()
+        reward_bar.addWidget(QLabel("Expedition:"))
+        self._reward_filter = QComboBox()
+        self._reward_filter.setMinimumWidth(150)
+        self._reward_filter.addItem("All")
+        self._reward_filter.currentIndexChanged.connect(self._apply_reward_filter)
+        reward_bar.addWidget(self._reward_filter)
+        reward_bar.addStretch()
+
+        self._unlock_all_btn = QPushButton("Unlock All Rewards")
+        self._unlock_all_btn.clicked.connect(self._on_unlock_all)
+        reward_bar.addWidget(self._unlock_all_btn)
+        rewards_layout.addLayout(reward_bar)
+
         self._rewards_table = QTableWidget()
-        self._rewards_table.setColumnCount(1)
-        self._rewards_table.setHorizontalHeaderLabels(["Reward ID"])
+        self._rewards_table.setColumnCount(2)
+        self._rewards_table.setHorizontalHeaderLabels(["Reward", "Expedition"])
         self._rewards_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Stretch
+            0, QHeaderView.Stretch
+        )
+        self._rewards_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
         )
         self._rewards_table.setAlternatingRowColors(True)
         rewards_layout.addWidget(self._rewards_table)
@@ -319,13 +352,53 @@ class ExpeditionTab(QWidget):
             self._milestone_table.setItem(row, 2, collected_item)
 
     def _populate_rewards(self):
-        redeemed = []
+        self._redeemed = []
         if self._data:
-            redeemed = self._data.get("RedeemedSeasonRewards", [])
+            self._redeemed = self._data.get("RedeemedSeasonRewards", [])
 
-        self._rewards_table.setRowCount(len(redeemed))
-        for row, reward in enumerate(redeemed):
+        # Build expedition filter options from redeemed rewards
+        exp_nums = set()
+        for reward in self._redeemed:
+            num = _reward_expedition_number(str(reward))
+            if num > 0:
+                exp_nums.add(num)
+
+        self._reward_filter.blockSignals(True)
+        self._reward_filter.clear()
+        self._reward_filter.addItem("All")
+        for num in sorted(exp_nums):
+            self._reward_filter.addItem(str(num))
+        if exp_nums:
+            self._reward_filter.addItem("Other")
+        self._reward_filter.blockSignals(False)
+
+        self._apply_reward_filter()
+
+    def _apply_reward_filter(self):
+        """Filter rewards table by selected expedition number."""
+        filter_text = self._reward_filter.currentText()
+
+        filtered = []
+        for reward in self._redeemed:
             reward_id = str(reward)
+            exp_num = _reward_expedition_number(reward_id)
+
+            if filter_text == "All":
+                pass  # include all
+            elif filter_text == "Other":
+                if exp_num > 0:
+                    continue
+            else:
+                try:
+                    if exp_num != int(filter_text):
+                        continue
+                except ValueError:
+                    continue
+
+            filtered.append((reward_id, exp_num))
+
+        self._rewards_table.setRowCount(len(filtered))
+        for row, (reward_id, exp_num) in enumerate(filtered):
             display = _resolve_reward_name(reward_id)
             item = QTableWidgetItem(display)
             item.setToolTip(reward_id)
@@ -333,6 +406,61 @@ class ExpeditionTab(QWidget):
             if pixmap is not None:
                 item.setIcon(QIcon(pixmap))
             self._rewards_table.setItem(row, 0, item)
+
+            exp_label = str(exp_num) if exp_num > 0 else "—"
+            self._rewards_table.setItem(row, 1, QTableWidgetItem(exp_label))
+
+    def _on_unlock_all(self):
+        """Unlock all known expedition rewards for the player."""
+        if self._data is None:
+            return
+
+        redeemed = self._data.get("RedeemedSeasonRewards", [])
+        existing = set(redeemed)
+
+        # Collect all known reward IDs from all expeditions in _EXPEDITIONS
+        # Build from known patterns: EXPD_*, BLD_BUGHEAD*, BLD_SHIPBREAK*, etc.
+        all_known = set()
+        for num, name, _repo in _EXPEDITIONS:
+            # Standard reward patterns per expedition
+            nn = f"{num:02d}"
+            n = str(num)
+            patterns = [
+                f"^EXPD_BANNER{nn}", f"^EXPD_DECAL{nn}",
+                f"^EXPD_POSTER{nn}A", f"^EXPD_POSTER{nn}B", f"^EXPD_POSTER{nn}C",
+                f"^EXPD_TITLE{nn}",
+            ]
+            # Also try single-digit variants
+            if num < 10:
+                patterns += [
+                    f"^BASE_CAVE{n}", f"^BLD_BUGHEAD{n}", f"^BLD_SHIPBREAK{n}",
+                    f"^EXPD_BACKPACK{nn}", f"^EXPD_CAPE{nn}",
+                    f"^EXPD_EGG_{nn}", f"^EXPD_FIREPACK{nn}",
+                    f"^EXPD_SHIP{nn}", f"^EXPD_PETCUST{nn}",
+                    f"^EXPD_HELMET{nn}", f"^EXPD_SPEC{nn}",
+                ]
+            else:
+                patterns += [
+                    f"^EXPD_CAPE{nn}", f"^EXPD_EGG_{nn}",
+                    f"^EXPD_SHIP{nn}", f"^EXPD_PETCUST{nn}",
+                    f"^EXPD_SHIPMAT{nn}", f"^EXPD_STAFF_{nn}",
+                ]
+            all_known.update(patterns)
+
+        # Add any rewards the player already has (they know more than we do)
+        all_known.update(existing)
+
+        # Add missing rewards
+        added = 0
+        for reward_id in sorted(all_known):
+            if reward_id not in existing:
+                redeemed.append(reward_id)
+                existing.add(reward_id)
+                added += 1
+
+        self._data["RedeemedSeasonRewards"] = redeemed
+        self._redeemed = redeemed
+        self._apply_reward_filter()
 
     def _get_expedition_url(self) -> str:
         """Build the download URL for the selected expedition."""

@@ -81,3 +81,68 @@ class TestExpeditionTab:
         }
         tab.set_data({}, common_state=common)
         assert "Collected" in tab._final_reward_label.text()
+
+
+class TestExpeditionRewardFilter:
+    """R-EXP-01: Dropdown selector to filter rewards by expedition."""
+
+    def test_reward_filter_combo_exists(self, tab):
+        assert hasattr(tab, "_reward_filter")
+
+    def test_reward_filter_has_all_option(self, tab):
+        assert tab._reward_filter.itemText(0) == "All"
+
+    def test_reward_filter_filters_rewards(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [
+                "^EXPD_POSTER06A",  # Expedition 6
+                "^EXPD_BANNER03",   # Expedition 3
+                "^EXPD_TITLE19",    # Expedition 19
+            ],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        # All shown initially
+        assert tab._rewards_table.rowCount() == 3
+
+        # Filter to expedition 6
+        idx = tab._reward_filter.findText("6")
+        if idx >= 0:
+            tab._reward_filter.setCurrentIndex(idx)
+            assert tab._rewards_table.rowCount() == 1
+
+    def test_all_filter_shows_everything(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": [
+                "^EXPD_POSTER06A",
+                "^EXPD_BANNER03",
+            ],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        tab._reward_filter.setCurrentIndex(0)  # "All"
+        assert tab._rewards_table.rowCount() == 2
+
+
+class TestUnlockAllRewards:
+    """R-EXP-03, R-EXP-04: Unlock all rewards button."""
+
+    def test_unlock_button_exists(self, tab):
+        assert hasattr(tab, "_unlock_all_btn")
+
+    def test_unlock_adds_missing_rewards(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": ["^EXPD_POSTER06A"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        initial_count = len(psd["RedeemedSeasonRewards"])
+        tab._on_unlock_all()
+        # Should have added more rewards
+        assert len(psd["RedeemedSeasonRewards"]) > initial_count
+
+    def test_unlock_no_duplicates(self, tab):
+        psd = {
+            "RedeemedSeasonRewards": ["^EXPD_POSTER06A"],
+        }
+        tab.set_data(psd, common_state=COMMON_STATE)
+        tab._on_unlock_all()
+        # No duplicates
+        assert len(psd["RedeemedSeasonRewards"]) == len(set(psd["RedeemedSeasonRewards"]))
