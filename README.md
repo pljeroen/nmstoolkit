@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-630%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-848%20passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -44,8 +44,23 @@ No Man's Sky save editor and toolkit.
 
 ## Installation
 
+### From source (pip)
+
 ```bash
 pip install -e ".[dev]"
+```
+
+### System dependencies (Debian/Ubuntu)
+
+```bash
+sudo apt install python3-pyside6.qtcore python3-pyside6.qtgui \
+  python3-pyside6.qtwidgets python3-pyside6.qtopenglwidgets
+```
+
+For development/testing, also install:
+
+```bash
+sudo apt install python3-hypothesis python3-pytest
 ```
 
 ## Usage
@@ -57,17 +72,17 @@ nmstoolkit
 Or run directly:
 
 ```bash
-python -c "from nmstoolkit.app import main; main()"
+python3 -m nmstoolkit.app
 ```
 
 ## Development
 
 ```bash
 # Run tests
-python -m pytest tests/ -q
+python3 -m pytest tests/ -q
 
 # Run with coverage
-python -m pytest tests/ --cov=nmstoolkit
+python3 -m pytest tests/ --cov=nmstoolkit
 ```
 
 ---
