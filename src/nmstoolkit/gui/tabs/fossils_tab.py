@@ -90,7 +90,7 @@ _FOSSIL_PART_NAMES = {
 }
 
 
-def _friendly_fossil_name(item_id: str) -> str:
+def friendly_fossil_name(item_id: str) -> str:
     """Convert a raw fossil ID to a friendly display name.
 
     E.g. FOS_BI_BODY_AC → 'Biped Body (AC)'
@@ -179,7 +179,7 @@ class FossilsTab(QWidget):
                 if item_id and is_fossil_item(item_id):
                     amount = slot.get("Amount", 0)
                     category = _categorize_fossil(item_id)
-                    friendly = _friendly_fossil_name(item_id)
+                    friendly = friendly_fossil_name(item_id)
                     rows.append((friendly, category, inv_label, amount))
 
         self._pieces_table.setRowCount(len(rows))
@@ -203,7 +203,7 @@ class FossilsTab(QWidget):
                 object_id = obj.get("ObjectID", "")
                 if object_id and is_fossil_base_object(object_id):
                     category = _categorize_fossil(object_id)
-                    friendly = _friendly_fossil_name(object_id)
+                    friendly = friendly_fossil_name(object_id)
                     rows.append((friendly, category, base_name))
 
         self._displays_table.setRowCount(len(rows))

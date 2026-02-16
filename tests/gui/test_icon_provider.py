@@ -175,57 +175,32 @@ class TestCaretPrefixCatalogueLookup:
 # ---------------------------------------------------------------------------
 
 class TestCorvetteModuleCatalogueResolution:
-    """R-ICO-05: Corvette modules (B_COK_A etc.) resolve icons via module map → catalogue."""
+    """R-ICO-05: Corvette modules (B_COK_A etc.) resolve icons via DDS path construction."""
 
-    def test_cockpit_resolves_via_catalogue(self):
-        """B_COK_A → BUILD_YOURSHIP_COCKPIT → catalogue icon."""
-        cat = _make_catalogue_with_items({
-            "BUILD_YOURSHIP_COCKPIT": {
-                "id": "BUILD_YOURSHIP_COCKPIT",
-                "icon": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/YOURSHIP.COCKPIT.DDS",
-            },
-        })
-        provider = IconProvider(icon_cache=None, catalogue=cat)
+    def test_cockpit_resolves(self):
+        """B_COK_A → per-variant DDS path directly."""
+        provider = IconProvider(icon_cache=None, catalogue=None)
         assert provider.get_icon_path("^B_COK_A") != ""
 
-    def test_wing_resolves_via_catalogue(self):
-        """B_WNG_B → BUILD_YOURSHIP_WING → catalogue icon."""
-        cat = _make_catalogue_with_items({
-            "BUILD_YOURSHIP_WING": {
-                "id": "BUILD_YOURSHIP_WING",
-                "icon": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/YOURSHIP.WING.DDS",
-            },
-        })
-        provider = IconProvider(icon_cache=None, catalogue=cat)
+    def test_wing_resolves(self):
+        """B_WNG_B → per-variant DDS path directly."""
+        provider = IconProvider(icon_cache=None, catalogue=None)
         assert provider.get_icon_path("^B_WNG_B") != ""
 
-    def test_thruster_resolves_via_catalogue(self):
-        """B_TRU_A → BUILD_YOURSHIP_THRUSTER → catalogue icon."""
-        cat = _make_catalogue_with_items({
-            "BUILD_YOURSHIP_THRUSTER": {
-                "id": "BUILD_YOURSHIP_THRUSTER",
-                "icon": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/YOURSHIP.THRUSTER.DDS",
-            },
-        })
-        provider = IconProvider(icon_cache=None, catalogue=cat)
+    def test_thruster_resolves(self):
+        """B_TRU_A → per-variant DDS path directly."""
+        provider = IconProvider(icon_cache=None, catalogue=None)
         assert provider.get_icon_path("^B_TRU_A") != ""
 
-    def test_all_corvette_prefixes_resolve_with_catalogue(self):
-        """Every prefix in _CORVETTE_MODULE_MAP should resolve when target is in catalogue."""
-        from nmstoolkit.gui.widgets.icon_provider import _CORVETTE_MODULE_MAP
+    def test_all_corvette_prefixes_resolve(self):
+        """Every prefix in _CORVETTE_ICON_PREFIX should resolve with a _A variant."""
+        from nmstoolkit.gui.widgets.icon_provider import _CORVETTE_ICON_PREFIX
 
-        # Build catalogue with all corvette build targets
-        items = {}
-        for target_id in set(_CORVETTE_MODULE_MAP.values()):
-            items[target_id] = {"id": target_id, "icon": f"TEXTURES/{target_id}.DDS"}
-
-        cat = _make_catalogue_with_items(items)
-        provider = IconProvider(icon_cache=None, catalogue=cat)
-
-        for prefix, target_id in _CORVETTE_MODULE_MAP.items():
-            test_id = f"^{prefix}_A"
+        provider = IconProvider(icon_cache=None, catalogue=None)
+        for type_key in _CORVETTE_ICON_PREFIX:
+            test_id = f"^B_{type_key}_A"
             result = provider.get_icon_path(test_id)
-            assert result != "", f"{test_id} → {target_id} should resolve but got empty"
+            assert result != "", f"{test_id} should resolve but got empty"
 
 
 # ===========================================================================
@@ -339,21 +314,21 @@ class TestCategory2CaretPrefix:
         provider = IconProvider(icon_cache=None, catalogue=None, icon_map=icon_map)
         assert provider.get_icon_path("^PROTECT") == "TEXTURES/UI/FRONTEND/ICONS/TECHNOLOGY/RENDER.YOURSUIT_ARMOUR.DDS"
 
-    def test_caret_base_part_resolves_via_catalogue(self):
-        """^BASE_BEAMSTONE not in icon_map, but in catalogue → step 3."""
+    def test_caret_base_part_resolves_via_static_map(self):
+        """^BASE_BEAMSTONE resolves via static map (step 0), overriding catalogue."""
         cat = _make_catalogue_with_items({
             "BASE_BEAMSTONE": {"id": "BASE_BEAMSTONE", "icon": "TEXTURES/UI/FRONTEND/ICONS/BASEBUILDING/BASE.BEAMSTONE.DDS"},
         })
         provider = IconProvider(icon_cache=None, catalogue=cat)
-        assert provider.get_icon_path("^BASE_BEAMSTONE") == "TEXTURES/UI/FRONTEND/ICONS/BASEBUILDING/BASE.BEAMSTONE.DDS"
+        assert provider.get_icon_path("^BASE_BEAMSTONE") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.BEAMSTONE.DDS"
 
-    def test_caret_cooker_resolves_via_catalogue(self):
-        """^COOKER not in icon_map, but in catalogue → step 3."""
+    def test_caret_cooker_resolves_via_static_map(self):
+        """^COOKER resolves via static map (step 0), overriding catalogue."""
         cat = _make_catalogue_with_items({
             "COOKER": {"id": "COOKER", "icon": "TEXTURES/UI/FRONTEND/ICONS/TECHNOLOGY/COOKER.DDS"},
         })
         provider = IconProvider(icon_cache=None, catalogue=cat)
-        assert provider.get_icon_path("^COOKER") == "TEXTURES/UI/FRONTEND/ICONS/TECHNOLOGY/COOKER.DDS"
+        assert provider.get_icon_path("^COOKER") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.COOKER.DDS"
 
     def test_caret_not_in_map_or_catalogue_returns_empty(self):
         cat = _make_catalogue_with_items({})
@@ -447,12 +422,12 @@ class TestCategory4CatalogueOnly:
         assert provider.get_icon_path("YOURFREIG_SCAN") == "TEXTURES/UI/FRONTEND/ICONS/TECHNOLOGY/RENDER.FREIGHTERSCAN.DDS"
 
     def test_catalogue_with_caret_prefix(self):
-        """^BUILDSIGNAL: not in icon_map → catalogue has BUILDSIGNAL."""
+        """^BUILDSIGNAL: resolves via static map (step 0), overriding catalogue."""
         cat = _make_catalogue_with_items({
             "BUILDSIGNAL": {"id": "BUILDSIGNAL", "icon": "TEXTURES/UI/FRONTEND/ICONS/BASEBUILDING/BUILD.SIGNAL.DDS"},
         })
         provider = IconProvider(icon_cache=None, catalogue=cat)
-        assert provider.get_icon_path("^BUILDSIGNAL") == "TEXTURES/UI/FRONTEND/ICONS/BASEBUILDING/BUILD.SIGNAL.DDS"
+        assert provider.get_icon_path("^BUILDSIGNAL") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.SIGNAL.DDS"
 
     def test_not_in_map_not_in_catalogue_returns_empty(self):
         cat = _make_catalogue_with_items({})
@@ -702,58 +677,45 @@ class TestCategory7UpgradePrefix:
 class TestCategory8CorvetteModule:
     """R-ICON-09: Corvette modules (B_COK_A, B_WNG_B).
 
-    Resolution step 6: longest-prefix match in _CORVETTE_MODULE_MAP,
-    then _lookup_resolved on the build part ID.
+    Resolution step 6: per-variant DDS path construction via _CORVETTE_ICON_PREFIX.
     """
 
     @pytest.fixture()
-    def catalogue(self):
-        """Catalogue with all corvette build target entries."""
-        from nmstoolkit.gui.widgets.icon_provider import _CORVETTE_MODULE_MAP
-        items = {}
-        for target_id in set(_CORVETTE_MODULE_MAP.values()):
-            items[target_id] = {"id": target_id, "icon": f"TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/{target_id}.DDS"}
-        return _make_catalogue_with_items(items)
+    def provider(self):
+        """Provider without catalogue — corvette resolution is now catalogue-independent."""
+        return IconProvider(icon_cache=None, catalogue=None)
 
-    def test_cockpit_a(self, catalogue):
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_COK_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_COCKPIT.DDS"
+    def test_cockpit_a(self, provider):
+        assert provider.get_icon_path("B_COK_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_COK1X2_A.DDS"
 
-    def test_cockpit_b(self, catalogue):
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_COK_B") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_COCKPIT.DDS"
+    def test_cockpit_b(self, provider):
+        assert provider.get_icon_path("B_COK_B") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_COK1X2_B.DDS"
 
-    def test_wing_a(self, catalogue):
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_WNG_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_WING.DDS"
+    def test_wing_a(self, provider):
+        assert provider.get_icon_path("B_WNG_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_WNG1X2_A.DDS"
 
-    def test_thruster_c(self, catalogue):
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_TRU_C") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_THRUSTER.DDS"
+    def test_thruster_c(self, provider):
+        assert provider.get_icon_path("B_TRU_C") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_TRU1X1_C.DDS"
 
-    def test_turret_a(self, catalogue):
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_TUR_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_TURRET.DDS"
+    def test_turret_a(self, provider):
+        assert provider.get_icon_path("B_TUR_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_TUR1X1_A.DDS"
 
-    def test_hab1_variant_longer_prefix(self, catalogue):
-        """B_HAB1 has a longer prefix than B_HAB — longest-prefix match should pick B_HAB1."""
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("B_HAB1_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_HAB.DDS"
+    def test_hab1_variant_longer_prefix(self, provider):
+        """B_HAB1 has a longer prefix than B_HAB — longest-prefix match should pick HAB1."""
+        assert provider.get_icon_path("B_HAB1_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_HAB1X2_A.DDS"
 
-    def test_caret_cockpit(self, catalogue):
+    def test_caret_cockpit(self, provider):
         """^B_COK_A — strip ^, then corvette module resolution."""
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        assert provider.get_icon_path("^B_COK_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILD_YOURSHIP_COCKPIT.DDS"
+        assert provider.get_icon_path("^B_COK_A") == "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_COK1X2_A.DDS"
 
-    def test_all_corvette_module_prefixes(self, catalogue):
-        """Every entry in _CORVETTE_MODULE_MAP resolves with a _A suffix."""
-        from nmstoolkit.gui.widgets.icon_provider import _CORVETTE_MODULE_MAP
-        provider = IconProvider(icon_cache=None, catalogue=catalogue)
-        for prefix, target_id in _CORVETTE_MODULE_MAP.items():
-            test_id = f"{prefix}_A"
+    def test_all_corvette_module_prefixes(self, provider):
+        """Every entry in _CORVETTE_ICON_PREFIX resolves with a _A variant."""
+        from nmstoolkit.gui.widgets.icon_provider import _CORVETTE_ICON_PREFIX
+        for type_key, dds_part in _CORVETTE_ICON_PREFIX.items():
+            test_id = f"B_{type_key}_A"
             result = provider.get_icon_path(test_id)
-            assert result != "", f"{test_id} → {target_id} should resolve"
-            assert target_id in result, f"{test_id} should resolve via {target_id}"
+            assert result != "", f"{test_id} should resolve"
+            assert f"BIGGS_BIG_{dds_part}_A" in result, f"{test_id} should contain BIGGS_BIG_{dds_part}_A"
 
 
 # ---------------------------------------------------------------------------

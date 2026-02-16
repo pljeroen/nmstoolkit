@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -80,6 +81,11 @@ class SlotEditor(QDialog):
             self.item_combo.addItem(label, item)
         self.item_combo.currentIndexChanged.connect(self._on_item_changed)
         form.addRow("Item:", self.item_combo)
+
+        # Item ID (read-only display of raw save ID)
+        self.item_id_label = QLabel(self._slot.get("Id", ""))
+        self.item_id_label.setStyleSheet("color: #888; font-family: monospace;")
+        form.addRow("Item ID:", self.item_id_label)
 
         # Type
         self.type_combo = QComboBox()

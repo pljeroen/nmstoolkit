@@ -132,6 +132,11 @@ def _get_item_name(item_id: str) -> str:
         if name:
             return name
 
+    # 1b. Fossil items get friendly names
+    from nmstoolkit.gui.tabs.fossils_tab import is_fossil_item, friendly_fossil_name
+    if is_fossil_item(item_id):
+        return friendly_fossil_name(item_id)
+
     # 2. Catalogue display_name (ALL CAPS from game locale, title-cased)
     if _CATALOGUE is not None:
         item = _CATALOGUE.find_item(item_id)
@@ -795,7 +800,7 @@ class InventoryGrid(QWidget):
             opt_action = menu.addAction("Optimize Tech Layout")
             opt_action.triggered.connect(self._optimize_layout)
 
-        menu.exec(widget.mapToGlobal(widget.rect().center()))
+        menu.popup(widget.mapToGlobal(widget.rect().center()))
 
     def clear_slot(self, x: int, y: int):
         """Clear the slot at (x, y) -- set Id to empty, Amount to 0."""

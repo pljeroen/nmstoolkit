@@ -67,24 +67,41 @@ _UPGRADE_PREFIX_MAP = {
 
 _YOUR_PREFIX_STRIP = ("YOURSHIP_", "YOURSUIT_", "YOURMULTI_", "YOURFREIG_", "YOURVEHIC_")
 
-# Corvette module prefixes → mapped to base building part IDs for icon resolution.
-# These are building parts that appear in corvette inventories.
-_CORVETTE_MODULE_MAP = {
-    "B_COK": "BUILD_YOURSHIP_COCKPIT",
-    "B_HAB": "BUILD_YOURSHIP_HAB",
-    "B_HAB1": "BUILD_YOURSHIP_HAB",
-    "B_WNG": "BUILD_YOURSHIP_WING",
-    "B_STR": "BUILD_YOURSHIP_STRUCTURE",
-    "B_CON": "BUILD_YOURSHIP_CONNECTOR",
-    "B_CON2": "BUILD_YOURSHIP_CONNECTOR",
-    "B_CON_L": "BUILD_YOURSHIP_CONNECTOR",
-    "B_TRU": "BUILD_YOURSHIP_THRUSTER",
-    "B_TUR": "BUILD_YOURSHIP_TURRET",
-    "B_LND": "BUILD_YOURSHIP_LANDING",
-    "B_SHL": "BUILD_YOURSHIP_SHELL",
-    "B_ALK": "BUILD_YOURSHIP_AIRLOCK",
-    "B_GEN": "BUILD_YOURSHIP_GENERATOR",
-    "B_DECO": "BUILD_YOURSHIP_DECO",
+# Base building techs not in the game catalogue — direct DDS path mapping.
+_BASE_TECH_ICON_MAP = {
+    "COOKER": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.COOKER.DDS",
+    "BUILDSIGNAL": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.SIGNAL.DDS",
+    "BUILDSAVE": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.SAVEPOINT.DDS",
+    "YOURGLITCHSEP": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/GROUPS/BUILDGROUP.GLITCH.DDS",
+    "BUILD_REFINER1": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.REFINER1.DDS",
+    "BUILD_REFINER2": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.REFINER2.DDS",
+    "BUILD_REFINER3": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.REFINER3.DDS",
+    "BASE_BEAMSTONE": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.BEAMSTONE.DDS",
+    "BASE_BUBBLECLUS": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.BUBBLECLUSTER.DDS",
+    "BASE_WEIRDCUBE": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BUILDABLE.WEIRDCUBE.DDS",
+    "PROC_LOOT": "TEXTURES/UI/FRONTEND/ICONS/PRODUCTS/PRODUCT.CURIO.1.DDS",
+    "PROC_BIO": "TEXTURES/UI/FRONTEND/ICONS/PRODUCTS/PRODUCT.CURIO.1.DDS",
+    "PROC_PLNT": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/DECORATION.PLANTPOT3.DDS",
+    "PROC_FARM": "TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/DECORATION.PLANTPOT3.DDS",
+    "PROC_TOOL": "TEXTURES/UI/FRONTEND/ICONS/PRODUCTS/PRODUCT.CURIO.1.DDS",
+    "PROC_CAPT": "TEXTURES/UI/FRONTEND/ICONS/PRODUCTS/PRODUCT.CURIO.1.DDS",
+    "PROC_CREW": "TEXTURES/UI/FRONTEND/ICONS/PRODUCTS/PRODUCT.CURIO.1.DDS",
+}
+
+# Corvette module type → DDS filename component for per-variant icon construction.
+_CORVETTE_ICON_PREFIX = {
+    "COK": "COK1X2", "HAB": "HAB1X1", "HAB1": "HAB1X2",
+    "WNG": "WNG1X2", "TRU": "TRU1X1", "TUR": "TUR1X1",
+    "SHL": "SHL1X1", "ALK": "ALK1X1", "GEN": "GEN1X1",
+    "CON": "CON1X1", "CON2": "CON2", "CON_L": "CON1X1",
+    "STR": "STR1X1", "DECO": "DECO1X1", "LND": "LND1X1",
+    "BTRU": "BTRU1X1",
+}
+
+# Fossil type code → full type name for DDS path construction.
+_FOSSIL_TYPE_MAP = {
+    "BI": "BIPED", "QUAD": "QUADRUPED", "WORM": "WORM",
+    "BIRD": "BIRD", "GRUN": "GRUNT",
 }
 
 _YOUR_SPECIAL_MAP = {
@@ -126,6 +143,12 @@ class IconProvider:
         catalogue lookup, YOUR* prefix resolution.
         Returns empty string if not found.
         """
+        # 0. Verified static map (overrides items.json which has legacy icon formats)
+        uid = item_id.lstrip("^")
+        dds_path = _BASE_TECH_ICON_MAP.get(uid, "")
+        if dds_path:
+            return dds_path
+
         # 1. Exact match in icon_map
         dds_path = self._icon_map.get(item_id, "")
         if dds_path:
@@ -177,12 +200,15 @@ class IconProvider:
             if result:
                 return result
 
-        # 6. Corvette module prefix resolution (B_COK_A -> BUILD_YOURSHIP_COCKPIT)
-        resolved = self._resolve_corvette_module(uid)
-        if resolved:
-            result = self._lookup_resolved(resolved)
-            if result:
-                return result
+        # 6. Corvette module DDS path construction (B_COK_A -> per-variant icon)
+        dds_path = self._resolve_corvette_module(uid)
+        if dds_path:
+            return dds_path
+
+        # 7. Fossil part DDS path construction (FOS_BI_BODY_AC -> per-part icon)
+        dds_path = self._resolve_fossil_icon(uid)
+        if dds_path:
+            return dds_path
 
         return ""
 
@@ -249,22 +275,61 @@ class IconProvider:
 
     @staticmethod
     def _resolve_corvette_module(uid: str) -> str:
-        """Resolve a corvette module ID (B_COK_A, B_WNG_B) to a base building part ID.
+        """Resolve a corvette module ID to a full DDS icon path.
 
-        Returns the mapped building part ID, or empty string if not a corvette module.
+        B_COK_A → TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_COK1X2_A.DDS
+        Returns the DDS path, or empty string if not a corvette module.
         """
         uid_upper = uid.upper()
-        # Strip procedural suffix
         if "#" in uid_upper:
             uid_upper = uid_upper.split("#")[0]
-        # Match longest prefix first
-        best_match = ""
-        best_base = ""
-        for prefix, base_id in _CORVETTE_MODULE_MAP.items():
-            if uid_upper.startswith(prefix) and len(prefix) > len(best_match):
-                best_match = prefix
-                best_base = base_id
-        return best_base
+        if not uid_upper.startswith("B_"):
+            return ""
+        # Strip B_ prefix, split into type parts and variant
+        remainder = uid_upper[2:]  # e.g. "COK_A", "HAB1_A", "CON_L_A"
+        # Match longest type prefix in _CORVETTE_ICON_PREFIX
+        best_type = ""
+        best_dds_part = ""
+        for type_key, dds_part in _CORVETTE_ICON_PREFIX.items():
+            if remainder.startswith(type_key + "_") and len(type_key) > len(best_type):
+                best_type = type_key
+                best_dds_part = dds_part
+        if not best_type:
+            return ""
+        variant = remainder[len(best_type) + 1:]  # e.g. "A", "B"
+        if not variant:
+            return ""
+        return f"TEXTURES/UI/FRONTEND/ICONS/BUILDABLE/BIGGS_BIG_{best_dds_part}_{variant}.DDS"
+
+    @staticmethod
+    def _resolve_fossil_icon(uid: str) -> str:
+        """Resolve a fossil item ID to a full DDS icon path.
+
+        FOS_BI_BODY_AC → TEXTURES/UI/FRONTEND/ICONS/FOSSILBONES/FOSSIL.BIPED.BODY.AC.DDS
+        PROC_FOSS → TEXTURES/UI/FRONTEND/ICONS/FOSSILBONES/FOSSIL.DISP.DDS
+        Returns the DDS path, or empty string if not a fossil item.
+        """
+        uid_upper = uid.upper()
+        if "#" in uid_upper:
+            uid_upper = uid_upper.split("#")[0]
+        # Procedural fossil samples
+        if uid_upper.startswith("PROC_FOSS"):
+            return "TEXTURES/UI/FRONTEND/ICONS/FOSSILBONES/FOSSIL.DISP.DDS"
+        # FOS_<TYPE>_<PART>[_<VARIANT>] pattern
+        if not uid_upper.startswith("FOS_"):
+            return ""
+        parts = uid_upper.split("_")
+        if len(parts) < 3:
+            return ""
+        type_code = parts[1]
+        full_type = _FOSSIL_TYPE_MAP.get(type_code, "")
+        if not full_type:
+            return ""
+        part_name = parts[2]
+        variant = parts[3] if len(parts) > 3 else ""
+        if variant:
+            return f"TEXTURES/UI/FRONTEND/ICONS/FOSSILBONES/FOSSIL.{full_type}.{part_name}.{variant}.DDS"
+        return f"TEXTURES/UI/FRONTEND/ICONS/FOSSILBONES/FOSSIL.{full_type}.{part_name}.DDS"
 
     def get_pixmap_path(self, item_id: str) -> Optional[Path]:
         """Return the cached PNG path for an item, or None if unavailable."""

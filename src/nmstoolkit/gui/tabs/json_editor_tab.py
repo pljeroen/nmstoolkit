@@ -3,11 +3,14 @@
 import json
 
 from PySide6.QtCore import Qt, QModelIndex
-from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QFont, QShortcut, QKeySequence, QStandardItem, QStandardItemModel, QTextDocument
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QLabel,
+    QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QSplitter,
     QTreeView,
     QVBoxLayout,
@@ -47,6 +50,34 @@ class JsonEditorTab(QWidget):
 
         splitter.setSizes([300, 700])
         layout.addWidget(splitter)
+
+        # Search bar (hidden by default, shown with Ctrl+F)
+        self._search_bar = QWidget()
+        search_layout = QHBoxLayout(self._search_bar)
+        search_layout.setContentsMargins(4, 2, 4, 2)
+        search_layout.addWidget(QLabel("Find:"))
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Search...")
+        self._search_input.returnPressed.connect(self._find_next)
+        search_layout.addWidget(self._search_input)
+        next_btn = QPushButton("Next")
+        next_btn.clicked.connect(self._find_next)
+        search_layout.addWidget(next_btn)
+        prev_btn = QPushButton("Previous")
+        prev_btn.clicked.connect(self._find_previous)
+        search_layout.addWidget(prev_btn)
+        close_btn = QPushButton("X")
+        close_btn.setFixedWidth(24)
+        close_btn.clicked.connect(self._hide_search_bar)
+        search_layout.addWidget(close_btn)
+        self._search_bar.hide()
+        layout.addWidget(self._search_bar)
+
+        # Keyboard shortcuts
+        find_shortcut = QShortcut(QKeySequence.Find, self)
+        find_shortcut.activated.connect(self._show_search_bar)
+        esc_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self._search_input)
+        esc_shortcut.activated.connect(self._hide_search_bar)
 
     def set_data(self, data: dict):
         self._data = data
@@ -122,3 +153,27 @@ class JsonEditorTab(QWidget):
         data = item.data(Qt.UserRole)
         if data is not None:
             self._text.setPlainText(json.dumps(data, indent=2, ensure_ascii=False))
+
+    def _show_search_bar(self):
+        """Show the find bar and focus the input."""
+        self._search_bar.show()
+        self._search_input.setFocus()
+        self._search_input.selectAll()
+
+    def _hide_search_bar(self):
+        """Hide the find bar."""
+        self._search_bar.hide()
+
+    def _find_next(self) -> bool:
+        """Find the next occurrence of the search text. Returns True if found."""
+        text = self._search_input.text()
+        if not text:
+            return False
+        return self._text.find(text)
+
+    def _find_previous(self) -> bool:
+        """Find the previous occurrence of the search text. Returns True if found."""
+        text = self._search_input.text()
+        if not text:
+            return False
+        return self._text.find(text, QTextDocument.FindFlag.FindBackward)
