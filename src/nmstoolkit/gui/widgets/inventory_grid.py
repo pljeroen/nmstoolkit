@@ -295,10 +295,7 @@ def _make_slot_style(
         f"border-radius: 3px;"
     )
     if special:
-        style += (
-            f"border-left: 3px solid {_SPECIAL_BORDER};"
-            f"border-top: 3px solid {_SPECIAL_BORDER};"
-        )
+        style += f"border: 2px solid {_SPECIAL_BORDER};"
     elif left_accent:
         style += f"border-left: 3px solid {left_accent};"
     return style
@@ -604,7 +601,14 @@ class InventoryGrid(QWidget):
         valid_set = {(v["X"], v["Y"]) for v in valid_indices}
 
         special_slots = inventory.get("SpecialSlots", [])
-        special_set = {(s["Index"]["X"], s["Index"]["Y"]) for s in special_slots}
+        special_set = {
+            (s["Index"]["X"], s["Index"]["Y"])
+            for s in special_slots
+            if s.get("Type", {}).get("InventorySpecialSlotType") == "TechBonus"
+            and "Index" in s
+            and "X" in s["Index"]
+            and "Y" in s["Index"]
+        }
 
         # If the inventory is essentially empty (no valid slots, no slot data,
         # and no meaningful dimensions), show a message instead of dark grid

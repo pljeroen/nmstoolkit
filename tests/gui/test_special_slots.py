@@ -73,11 +73,10 @@ class TestSpecialSlotRendering:
         assert w1._special is False
 
     def test_special_slot_style_contains_gold_border(self):
-        """Style for special slots should contain the gold border color."""
+        """Style for special slots should use a full gold border."""
         style = _make_slot_style("#2d3a5a", "#48a", special=True)
         assert _SPECIAL_BORDER in style
-        assert "border-left" in style
-        assert "border-top" in style
+        assert f"border: 2px solid {_SPECIAL_BORDER}" in style
 
     def test_non_special_slot_style_no_gold(self):
         """Style for normal slots should NOT contain gold border."""
@@ -107,6 +106,22 @@ class TestSpecialSlotRendering:
         assert grid.get_slot_widget(0, 0)._special is True
         assert grid.get_slot_widget(1, 0)._special is False
         assert grid.get_slot_widget(2, 0)._special is True
+
+    def test_only_techbonus_slots_marked_special(self):
+        """Only InventorySpecialSlotType=TechBonus should render as special."""
+        inventory = _make_inventory(
+            slots=[_make_slot(x=0, y=0, inv_type="Technology")],
+            valid_indices=[{"X": 0, "Y": 0}],
+            width=1,
+            height=1,
+            special_slots=[
+                {"Type": {"InventorySpecialSlotType": "CargoBonus"}, "Index": {"X": 0, "Y": 0}},
+            ],
+        )
+        grid = InventoryGrid("Test")
+        grid.set_inventory(inventory)
+
+        assert grid.get_slot_widget(0, 0)._special is False
 
 
 class TestToggleSpecial:
