@@ -1,7 +1,6 @@
 """Fish Finder tab — reference guide for fishing in NMS."""
 
 import json
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -18,10 +17,11 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import get_item_icon
+from nmstoolkit.paths import resource_dir
 
 
 def _load_items():
-    data_path = Path(__file__).resolve().parent.parent.parent / "data" / "items.json"
+    data_path = resource_dir() / "items.json"
     if not data_path.exists():
         return []
     with open(data_path) as f:

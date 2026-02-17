@@ -2,7 +2,6 @@
 
 import copy
 import json
-from pathlib import Path
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
@@ -16,8 +15,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from nmstoolkit.paths import resource_dir
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = resource_dir()
 
 _CATALOGUE = None
 _ICON_PROVIDER = None

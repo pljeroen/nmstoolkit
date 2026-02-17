@@ -27,12 +27,12 @@ def qapp():
 class TestExternalToolsDir:
     """R-GUI-04: _external_tools_dir returns correct path per environment."""
 
-    def test_dev_mode_returns_data_dir(self):
-        from nmstoolkit.gui.main_window import _external_tools_dir, DATA_DIR
+    def test_dev_mode_returns_user_data_dir(self, tmp_path):
+        from nmstoolkit.gui.main_window import _external_tools_dir
 
-        with patch.object(sys, "frozen", False, create=True):
+        with patch.dict("os.environ", {"NMSTOOLKIT_DATA_DIR": str(tmp_path)}):
             result = _external_tools_dir()
-        assert result == DATA_DIR / "ExternalTools"
+        assert result == tmp_path / "ExternalTools"
 
     def test_frozen_mode_returns_exe_sibling(self, tmp_path):
         from nmstoolkit.gui.main_window import _external_tools_dir

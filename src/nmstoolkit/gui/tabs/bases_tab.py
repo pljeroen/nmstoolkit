@@ -24,18 +24,12 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
-
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+from nmstoolkit.paths import user_data_root
 
 
 def _base_library_dir() -> Path:
     """Return persistent base library directory."""
-    import sys
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
-    else:
-        base = _DATA_DIR
-    lib_dir = base / "base_library"
+    lib_dir = user_data_root() / "base_library"
     lib_dir.mkdir(parents=True, exist_ok=True)
     return lib_dir
 

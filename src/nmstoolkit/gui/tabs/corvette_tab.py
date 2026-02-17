@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
+from nmstoolkit.paths import cache_meshes_dir
 
 # Module category mapping from ID prefix to human-readable category.
 _MODULE_CATEGORIES = {
@@ -318,12 +319,7 @@ class CorvetteTab(QWidget):
     @staticmethod
     def _mesh_cache_dir() -> Path:
         """Return mesh cache directory."""
-        import sys
-        if getattr(sys, "frozen", False):
-            base = Path(sys.executable).parent
-        else:
-            base = Path(__file__).parent.parent.parent / "data"
-        return base / "meshes"
+        return cache_meshes_dir()
 
     def _on_corvette_selected(self, index):
         if index < 0:

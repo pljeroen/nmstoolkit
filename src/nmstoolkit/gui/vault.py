@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from nmstoolkit.paths import user_data_root
 
 # Overridable base for testing
 _VAULT_BASE = None
@@ -15,12 +15,7 @@ def _vault_root() -> Path:
     """Return vault root directory."""
     if _VAULT_BASE is not None:
         return _VAULT_BASE / "vault"
-    import sys
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
-    else:
-        base = _DATA_DIR
-    return base / "vault"
+    return user_data_root() / "vault"
 
 
 def vault_dir(entity_type: str) -> Path:

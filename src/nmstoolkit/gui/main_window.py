@@ -23,6 +23,12 @@ from PySide6.QtWidgets import (
 from nmstoolkit.backup import create_backup
 from nmstoolkit.core.icon_cache import IconCache
 from nmstoolkit.core.icon_extractor import IconExtractor
+from nmstoolkit.paths import (
+    cache_icons_dir,
+    cache_meshes_dir,
+    external_tools_dir,
+    resource_dir,
+)
 from nmstoolkit.core.save_file import SaveFile
 from nmstoolkit.core.save_scanner import SaveProfile, scan_for_profiles
 from nmstoolkit.gui.widgets.icon_provider import IconProvider
@@ -46,31 +52,19 @@ from nmstoolkit.gui.tabs.recipe_finder_tab import RecipeFinderTab
 from nmstoolkit.gui.tabs.fish_finder_tab import FishFinderTab
 from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = resource_dir()
 KEY_MAP_PATH = DATA_DIR / "jsonmap.txt"
 ACCOUNT_KEY_MAP_PATH = DATA_DIR / "jsonmapac.txt"
 
 
 def _user_cache_dir() -> Path:
-    """Return persistent cache dir next to the executable (or project root in dev)."""
-    import sys
-    if getattr(sys, "frozen", False):
-        # PyInstaller .exe — use the folder the .exe lives in
-        base = Path(sys.executable).parent
-    else:
-        # Development — use project data dir
-        base = DATA_DIR
-    cache = base / "icons"
-    cache.mkdir(parents=True, exist_ok=True)
-    return cache
+    """Return writable icon cache directory."""
+    return cache_icons_dir()
 
 
 def _external_tools_dir() -> Path:
     """Return directory for external tool binaries (MBINCompiler, etc.)."""
-    import sys
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "ExternalTools"
-    return DATA_DIR / "ExternalTools"
+    return external_tools_dir()
 
 
 def _detect_save_dirs() -> List[Path]:
@@ -307,6 +301,20 @@ class MainWindow(QMainWindow):
         """
         cache_dir = _user_cache_dir()
 
+        # First-run: if no cached game data exists, offer to import icons
+        cat_exists = (cache_dir / "game_catalogue.json").exists()
+        map_exists = (cache_dir / "icon_map.json").exists()
+        if not cat_exists and not map_exists:
+            answer = QMessageBox.question(
+                self, "No Game Data Found",
+                "No cached game data found. Import game icons now?\n\n"
+                "This extracts icon textures from the NMS game directory "
+                "for use in the editor.",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._on_extract_icons()
+            return
+
         from nmstoolkit.gui.widgets.inventory_grid import set_icon_provider, set_catalogue
         from nmstoolkit.core.game_catalogue import GameCatalogue
 
@@ -386,6 +394,24 @@ class MainWindow(QMainWindow):
                 game_path = game_path.parent.parent
 
         cache_dir = _user_cache_dir()
+
+        # Check for MBINCompiler before extraction — offer download if missing
+        pre_check = self._find_mbin_compiler(pak_dir)
+        if pre_check is None:
+            answer = QMessageBox.question(
+                self, "MBINCompiler Required",
+                "MBINCompiler was not found. It is required for full icon matching "
+                "(without it, only ~750 items match instead of ~5700).\n\n"
+                "Download MBINCompiler now?",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                from nmstoolkit.gui.dialogs.external_deps_dialog import ExternalDepsDialog
+                dialog = ExternalDepsDialog(
+                    external_tools_dir=_external_tools_dir(), parent=self,
+                )
+                dialog.exec()
+                # Re-check after dialog closes (user may have downloaded it)
+                self._find_mbin_compiler(pak_dir)
 
         extractor = IconExtractor(game_path, cache_dir)
 
@@ -523,12 +549,7 @@ class MainWindow(QMainWindow):
             from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
             from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline
 
-            import sys
-            if getattr(sys, "frozen", False):
-                cache_dir = Path(sys.executable).parent / "meshes"
-            else:
-                cache_dir = DATA_DIR / "meshes"
-            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir = cache_meshes_dir()
 
             pipeline = CorvetteMeshPipeline(cache_dir=cache_dir)
             converter = MbinCompilerAdapter(mbin_compiler)

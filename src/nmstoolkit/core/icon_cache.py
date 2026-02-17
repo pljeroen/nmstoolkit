@@ -12,17 +12,11 @@ from typing import List, Optional
 from PIL import Image
 
 from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
+from nmstoolkit.paths import cache_icons_dir
 
 def _default_cache_dir() -> Path:
-    """Return persistent cache dir next to exe or in project data dir."""
-    import sys
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
-    else:
-        base = Path(__file__).parent.parent / "data"
-    d = base / "icons"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return writable icon cache directory."""
+    return cache_icons_dir()
 
 
 class IconCache:

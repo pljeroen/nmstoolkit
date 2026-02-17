@@ -22,8 +22,9 @@ from nmstoolkit.gui.widgets.inventory_grid import (
     get_item_display_name,
     get_item_icon,
 )
+from nmstoolkit.paths import cache_icons_dir, resource_dir
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+DATA_DIR = resource_dir()
 
 # Known refiner recipe IDs (0-indexed)
 _MAX_REFINER_RECIPES = 400
@@ -46,11 +47,7 @@ def _load_items():
 
 def _catalogue_path() -> Path:
     """Return the path to game_catalogue.json."""
-    import sys
-    if getattr(sys, "frozen", False):
-        cache_dir = Path(sys.executable).parent / "icons"
-    else:
-        cache_dir = DATA_DIR / "icons"
+    cache_dir = cache_icons_dir()
     return cache_dir / "game_catalogue.json"
 
 

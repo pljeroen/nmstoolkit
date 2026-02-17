@@ -19,8 +19,9 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.tabs.bases_tab import _decode_galactic_address
 from nmstoolkit.gui.widgets.inventory_grid import get_item_display_name
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
+from nmstoolkit.paths import resource_dir
 
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+_DATA_DIR = resource_dir()
 
 
 def _load_perk_data():
