@@ -74,6 +74,15 @@ def _get_module_category(item_id: str) -> str:
 _CORVETTE_MODULE_PREFIXES = ("B_COK", "B_HAB", "B_WNG", "B_STR", "B_TRU", "B_TUR", "B_LND", "B_SHL", "B_ALK", "B_GEN", "B_CON", "B_DECO")
 
 
+def _inventory_has_data(inv: dict) -> bool:
+    if not isinstance(inv, dict):
+        return False
+    for slot in inv.get("Slots", []):
+        if isinstance(slot, dict) and slot.get("Id"):
+            return True
+    return False
+
+
 def _is_corvette_ship(ship: dict) -> bool:
     """Check if a ship is a corvette.
 
@@ -185,6 +194,11 @@ class CorvetteTab(QWidget):
         layout.addWidget(left)
 
         # Right: inventory sub-tabs
+        self._right_placeholder = QLabel("Load a save to view corvette inventories")
+        self._right_placeholder.setAlignment(Qt.AlignCenter)
+        self._right_placeholder.setWordWrap(True)
+        self._right_placeholder.setStyleSheet("color: #888; font-size: 13px; padding: 24px;")
+
         self._inv_tabs = QTabWidget()
         self._inv_general = InventoryGrid("General")
         self._inv_tech = InventoryGrid("Technology")
@@ -213,10 +227,17 @@ class CorvetteTab(QWidget):
         draft_layout.addWidget(self._draft_stack)
 
         self._inv_tabs.addTab(self._inv_general, "General")
-        self._inv_tabs.addTab(self._inv_tech, "Technology")
+        self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
         self._inv_tabs.addTab(self._draft_container, "Build Grid")
-        layout.addWidget(self._inv_tabs)
+        self._inv_tabs.setVisible(False)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self._right_placeholder)
+        right_layout.addWidget(self._inv_tabs)
+        layout.addWidget(right)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -241,11 +262,18 @@ class CorvetteTab(QWidget):
         self._summary_group.setVisible(False)
 
         if not has_any:
+            self._inv_tabs.setVisible(False)
+            self._right_placeholder.setVisible(True)
+            self._right_placeholder.setText(
+                "No corvettes or active draft found in this save."
+            )
             self._inv_general.set_inventory({})
             self._inv_tech.set_inventory({})
             self._inv_cargo.set_inventory({})
             self._inv_draft.set_inventory({})
             return
+        self._inv_tabs.setVisible(True)
+        self._right_placeholder.setVisible(False)
 
         # Populate dropdown
         self._corvette_combo.blockSignals(True)
@@ -370,14 +398,16 @@ class CorvetteTab(QWidget):
         # Inventories
         self._inv_general.set_inventory(inv)
         self._inv_tech.set_inventory(ship.get("Inventory_TechOnly", {}))
-        self._inv_cargo.set_inventory(ship.get("Inventory_Cargo", {}))
+        cargo_inv = ship.get("Inventory_Cargo", {})
+        self._inv_cargo.set_inventory(cargo_inv)
         self._inv_draft.set_inventory({})
 
-        # Show General/Tech/Cargo tabs, hide Build Grid
+        # Show General/Tech/Cargo/Build Grid tabs for completed corvettes.
+        # Build Grid may still be useful to inspect active draft state.
         self._inv_tabs.setTabVisible(0, True)
         self._inv_tabs.setTabVisible(1, True)
-        self._inv_tabs.setTabVisible(2, True)
-        self._inv_tabs.setTabVisible(3, False)
+        self._inv_tabs.setTabVisible(2, _inventory_has_data(cargo_inv))
+        self._inv_tabs.setTabVisible(3, True)
         self._inv_tabs.setCurrentIndex(0)
 
         # Module summary from general inventory

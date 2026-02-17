@@ -47,6 +47,15 @@ _STAT_IDS = [
 ]
 
 
+def _inventory_has_data(inv: dict) -> bool:
+    if not isinstance(inv, dict):
+        return False
+    for slot in inv.get("Slots", []):
+        if isinstance(slot, dict) and slot.get("Id"):
+            return True
+    return False
+
+
 def _detect_ship_type(resource: dict) -> str:
     """Detect ship type from Resource.Filename."""
     filename = resource.get("Filename", "").upper()
@@ -147,14 +156,15 @@ class ShipsTab(QWidget):
         layout.addWidget(left)
 
         # Right: inventory tabs
-        right = QTabWidget()
+        self._inv_tabs = QTabWidget()
         self._inv_general = InventoryGrid("General")
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
-        right.addTab(self._inv_general, "General")
-        right.addTab(self._inv_tech, "Technology")
-        right.addTab(self._inv_cargo, "Cargo")
-        layout.addWidget(right)
+        self._inv_tabs.addTab(self._inv_general, "General")
+        self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
+        self._inv_tabs.addTab(self._inv_cargo, "Cargo")
+        self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
+        layout.addWidget(self._inv_tabs)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -226,7 +236,9 @@ class ShipsTab(QWidget):
         # Inventories
         self._inv_general.set_inventory(inv)
         self._inv_tech.set_inventory(ship.get("Inventory_TechOnly", {}))
-        self._inv_cargo.set_inventory(ship.get("Inventory_Cargo", {}))
+        cargo_inv = ship.get("Inventory_Cargo", {})
+        self._inv_cargo.set_inventory(cargo_inv)
+        self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
 
     def _on_name_changed(self):
         ship = self._current_ship()

@@ -9,9 +9,14 @@ from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
+    QHeaderView,
+    QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -320,6 +325,39 @@ def _lighten(hex_color: str) -> str:
     ).name()
 
 
+_STAT_NAME_MAP = {
+    "Ship_Damage": "Damage",
+    "Ship_Shield": "Shield",
+    "Ship_Hyperdrive": "Hyperdrive",
+    "Ship_Agile": "Maneuverability",
+    "Suit_Health": "Health",
+    "Suit_Energy": "Energy",
+    "Suit_Shield": "Shield",
+}
+
+
+def _display_stat_name(stat_id: str) -> str:
+    if not stat_id:
+        return "Unknown"
+    raw = str(stat_id).lstrip("^")
+    if raw in _STAT_NAME_MAP:
+        return _STAT_NAME_MAP[raw]
+    return raw.replace("_", " ").title()
+
+
+def _arrow_from_to(src_x: int, src_y: int, dst_x: int, dst_y: int) -> str:
+    """Return arrow glyph pointing from source slot to destination slot."""
+    dx = dst_x - src_x
+    dy = dst_y - src_y
+    if dx > 0:
+        return "→"
+    if dx < 0:
+        return "←"
+    if dy > 0:
+        return "↓"
+    return "↑"
+
+
 class SlotWidget(QWidget):
     """A single inventory slot."""
 
@@ -337,6 +375,7 @@ class SlotWidget(QWidget):
         self._drag_start_pos = None
         self._drag_started = False
         self._grid = None
+        self._adjacent_hint = False
         self.setFixedSize(80, 80)
         self.setAcceptDrops(not locked)
 
@@ -374,6 +413,8 @@ class SlotWidget(QWidget):
         else:
             bg, border = _EMPTY_COLORS
             self.setStyleSheet(_make_slot_style(bg, border, special=self._special))
+        if self._adjacent_hint and not self._special and not self._locked:
+            self.setStyleSheet(self.styleSheet() + "border: 2px dashed #66ccff;")
 
     def paintEvent(self, event):
         """Ensure special-slot border is visible even if stylesheet precedence varies."""
@@ -447,6 +488,8 @@ class SlotWidget(QWidget):
         self._apply_style()
 
     def enterEvent(self, event):
+        if self._grid is not None:
+            self._grid._highlight_adjacency(self._x, self._y)
         if not self._locked:
             if self._inv_type:
                 _, border = _get_type_colors(self._inv_type)
@@ -462,6 +505,8 @@ class SlotWidget(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        if self._grid is not None:
+            self._grid._clear_adjacency_highlight()
         if not self._locked:
             self._apply_style()
         super().leaveEvent(event)
@@ -577,12 +622,30 @@ class InventoryGrid(QWidget):
         self._inventory = None
         self._slots = []  # kept for backward compat
         self._slot_widgets = {}  # (x, y) -> SlotWidget
+        self._highlighted_neighbors = set()
+        self._connector_labels = []
+        self._hover_rows = []
+        self._last_analysis = None
+        self._effects_analysis = {}
+        self._opt_mode = "balanced"
+        self._effects_mode_order = [
+            ("current", "Current"),
+            ("balanced", "Balanced"),
+            ("dps", "DPS"),
+            ("endurance", "Endurance"),
+        ]
+        self._effects_mode_index = 0
         self._no_slots_label = None
         self._build_ui()
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+
+        content = QWidget()
+        content_layout = QHBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -591,7 +654,102 @@ class InventoryGrid(QWidget):
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setSpacing(2)
         scroll.setWidget(self._grid_widget)
-        outer.addWidget(scroll)
+        content_layout.addWidget(scroll, 1)
+
+        self._hover_popup = QWidget(self)
+        self._hover_popup.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._hover_popup.setStyleSheet(
+            "background: rgba(18, 18, 22, 235);"
+            "border: 1px solid #666;"
+            "border-radius: 6px;"
+        )
+        self._hover_popup_layout = QVBoxLayout(self._hover_popup)
+        self._hover_popup_layout.setContentsMargins(8, 6, 8, 6)
+        self._hover_popup_layout.setSpacing(4)
+        self._hover_popup_title = QLabel("Boost Breakdown")
+        self._hover_popup_title.setStyleSheet("color: #FFD700; font-weight: bold;")
+        self._hover_popup_layout.addWidget(self._hover_popup_title)
+        self._hover_popup.hide()
+
+        self._effects_group = QWidget()
+        self._effects_group.setStyleSheet(
+            "QWidget {"
+            "  border: 1px solid #4b4430;"
+            "  border-radius: 8px;"
+            "  background-color: #17181c;"
+            "}"
+        )
+        effects_layout = QVBoxLayout(self._effects_group)
+        effects_layout.setContentsMargins(6, 4, 6, 6)
+        effects_layout.setSpacing(4)
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
+        mode_label = QLabel("View:")
+        mode_label.setStyleSheet("color: #b8b8b8; font-size: 11px;")
+        top_row.addWidget(mode_label, 0)
+        self._effects_value_toggle = QPushButton("Current")
+        self._effects_value_toggle.clicked.connect(self._cycle_effects_mode)
+        btn_style = (
+            "QPushButton { background: #2a2d36; color: #f0d57a; border: 1px solid #444; "
+            "border-radius: 6px; padding: 4px 8px; }"
+        )
+        self._effects_value_toggle.setStyleSheet(btn_style)
+        top_row.addWidget(self._effects_value_toggle, 0)
+        self._effects_apply_button = QPushButton("Apply")
+        self._effects_apply_button.clicked.connect(self._apply_effects_mode)
+        self._effects_apply_button.setStyleSheet(btn_style)
+        self._effects_apply_button.setEnabled(False)
+        top_row.addWidget(self._effects_apply_button, 0)
+        self._effects_score = QLabel("Score: —")
+        self._effects_score.setStyleSheet("color: #b8b8b8; font-size: 11px;")
+        self._effects_score.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        top_row.addWidget(self._effects_score, 0)
+        top_row.addStretch(1)
+        effects_layout.addLayout(top_row)
+
+        self._effects_stats = QTableWidget(0, 3)
+        self._effects_stats.setHorizontalHeaderLabels(["Stat", "Value", "Gain"])
+        self._effects_stats.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._effects_stats.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._effects_stats.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._effects_stats.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._effects_stats.setSelectionMode(QTableWidget.NoSelection)
+        self._effects_stats.verticalHeader().setVisible(False)
+        self._effects_stats.setAlternatingRowColors(True)
+        self._effects_stats.setStyleSheet(
+            "QTableWidget { background: #1f2127; color: #e3e3e3; gridline-color: #343844; }"
+            "QHeaderView::section { background: #2a2d36; color: #f0d57a; padding: 3px; border: none; }"
+        )
+        self._effects_stats.setMinimumHeight(140)
+        self._effects_stats.setMaximumHeight(16777215)
+        effects_layout.addWidget(self._effects_stats, 2)
+
+        self._effects_modules = QTableWidget(0, 4)
+        self._effects_modules.setHorizontalHeaderLabels(
+            ["Module", "Position", "Adjacency", "Impact"]
+        )
+        self._effects_modules.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._effects_modules.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._effects_modules.setSelectionMode(QTableWidget.NoSelection)
+        self._effects_modules.verticalHeader().setVisible(False)
+        self._effects_modules.setAlternatingRowColors(True)
+        self._effects_modules.setStyleSheet(
+            "QTableWidget { background: #1f2127; color: #e3e3e3; gridline-color: #343844; }"
+            "QHeaderView::section { background: #2a2d36; color: #f0d57a; padding: 3px; border: none; }"
+        )
+        self._effects_modules.setMinimumHeight(200)
+        self._effects_modules.setMaximumHeight(16777215)
+        effects_layout.addWidget(self._effects_modules, 3)
+
+        self._effects_group.setVisible(False)
+        self._effects_group.setMaximumWidth(340)
+        self._effects_group.setMinimumWidth(260)
+        content_layout.addWidget(self._effects_group, 0)
+
+        outer.addWidget(content)
 
     def set_inventory(self, inventory: dict):
         self._inventory = inventory
@@ -668,6 +826,234 @@ class InventoryGrid(QWidget):
                 self._slot_widgets[pos] = widget
                 self._slots.append(widget)
                 self._grid_layout.addWidget(widget, y, x)
+        self._refresh_effects()
+
+    def _refresh_effects(self):
+        if self._inventory is None:
+            self._effects_group.setVisible(False)
+            return
+        from nmstoolkit.gui.widgets.slot_optimizer import analyze_tech_layout
+        has_tech = any(
+            s.get("Type", {}).get("InventoryType") == "Technology" and s.get("Id")
+            for s in self._inventory.get("Slots", [])
+        )
+        if not has_tech:
+            self._effects_group.setVisible(False)
+            return
+
+        self._effects_group.setVisible(True)
+        self._effects_analysis = {
+            "balanced": analyze_tech_layout(self._inventory, _CATALOGUE, mode="balanced"),
+            "dps": analyze_tech_layout(self._inventory, _CATALOGUE, mode="dps"),
+            "endurance": analyze_tech_layout(self._inventory, _CATALOGUE, mode="endurance"),
+        }
+        self._last_analysis = self._effects_analysis.get("balanced")
+        self._render_effects()
+
+    def _cycle_effects_mode(self):
+        self._effects_mode_index = (self._effects_mode_index + 1) % len(self._effects_mode_order)
+        self._render_effects()
+
+    def _apply_effects_mode(self):
+        key, label = self._effects_mode_order[self._effects_mode_index]
+        if key == "current":
+            return
+        self._optimize_layout(key, label)
+
+    def _render_effects(self):
+        mode_key, mode_label = self._effects_mode_order[self._effects_mode_index]
+        self._effects_value_toggle.setText(mode_label)
+        self._effects_apply_button.setEnabled(mode_key != "current")
+
+        base = self._effects_analysis.get("balanced")
+        if base is None:
+            return
+        mode_analysis = self._effects_analysis.get(mode_key, base)
+        module_rows = base.get("module_rows", [])
+        if mode_key == "current":
+            self._effects_score.setText(f"Score {base['current_score']}")
+        else:
+            self._effects_score.setText(
+                f"Score {mode_analysis['current_score']}->{mode_analysis['optimized_score']} "
+                f"({mode_analysis['delta_score']:+d})"
+            )
+
+        stat_rows = mode_analysis.get("stat_rows", [])
+        stat_rows = sorted(stat_rows, key=lambda r: abs(float(r.get("delta", 0.0))), reverse=True)
+        self._effects_stats.setHorizontalHeaderLabels(
+            ["Stat", "Value", "Gain"]
+        )
+        self._effects_stats.setRowCount(len(stat_rows))
+        for r, row in enumerate(stat_rows):
+            self._effects_stats.setItem(r, 0, QTableWidgetItem(_display_stat_name(str(row["stat"]))))
+            stat_item = self._effects_stats.item(r, 0)
+            if stat_item is not None:
+                stat_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            if mode_key == "current":
+                val = float(row.get("current", 0.0))
+                gain = "-"
+            else:
+                val = float(row.get("optimized", 0.0))
+                gain = f"{row['delta']:+.2f}"
+            self._effects_stats.setItem(r, 1, QTableWidgetItem(f"{val:.2f}"))
+            self._effects_stats.setItem(r, 2, QTableWidgetItem(gain))
+            v_item = self._effects_stats.item(r, 1)
+            g_item = self._effects_stats.item(r, 2)
+            if v_item is not None:
+                v_item.setTextAlignment(Qt.AlignCenter)
+            if g_item is not None:
+                g_item.setTextAlignment(Qt.AlignCenter)
+
+        mods = sorted(module_rows, key=lambda m: int(m.get("contribution", 0)), reverse=True)
+        self._effects_modules.setRowCount(len(mods))
+        for r, m in enumerate(mods):
+            item_id = str(m.get("id", ""))
+            icon = get_item_icon(item_id, size=18)
+            name = _get_item_name(item_id) if item_id else "Unknown"
+            special_hint = " (Supercharged)" if m.get("special") else ""
+            tooltip = f"{name} [{item_id}]{special_hint}"
+            icon_holder = QWidget(self._effects_modules)
+            icon_layout = QHBoxLayout(icon_holder)
+            icon_layout.setContentsMargins(0, 0, 0, 0)
+            icon_layout.setSpacing(0)
+            icon_label = QLabel(icon_holder)
+            icon_label.setAlignment(Qt.AlignCenter)
+            icon_label.setToolTip(tooltip)
+            icon_holder.setToolTip(tooltip)
+            if icon is not None:
+                icon_label.setPixmap(icon)
+            icon_layout.addStretch(1)
+            icon_layout.addWidget(icon_label, 0, Qt.AlignCenter)
+            icon_layout.addStretch(1)
+            self._effects_modules.setCellWidget(r, 0, icon_holder)
+            self._effects_modules.setItem(r, 1, QTableWidgetItem(f"{m['pos'][0]},{m['pos'][1]}"))
+            self._effects_modules.setItem(r, 2, QTableWidgetItem(f"{m['adjacent_same']} linked"))
+            self._effects_modules.setItem(r, 3, QTableWidgetItem(f"+{m['contribution']}"))
+            for c in (1, 2, 3):
+                cell = self._effects_modules.item(r, c)
+                if cell is not None:
+                    cell.setTextAlignment(Qt.AlignCenter)
+
+    def _highlight_adjacency(self, x: int, y: int):
+        self._clear_adjacency_highlight()
+        slot = self._find_slot_data(x, y)
+        if slot is None:
+            return
+        if slot.get("Type", {}).get("InventoryType") != "Technology":
+            return
+        from nmstoolkit.gui.widgets.slot_optimizer import _get_tech_category, _neighbors
+        group = _get_tech_category(slot.get("Id", ""), _CATALOGUE)
+        if not group:
+            return
+        center_widget = self._slot_widgets.get((x, y))
+        if center_widget is None:
+            return
+        boosts = []
+        center_special = center_widget._special
+        if center_special:
+            boosts.append((slot.get("Id", ""), "Supercharged +25%"))
+        for nx, ny in _neighbors(x, y):
+            nslot = self._find_slot_data(nx, ny)
+            if nslot is None:
+                continue
+            if nslot.get("Type", {}).get("InventoryType") != "Technology":
+                continue
+            ngroup = _get_tech_category(nslot.get("Id", ""), _CATALOGUE)
+            if ngroup != group:
+                continue
+            w = self._slot_widgets.get((nx, ny))
+            if w is None:
+                continue
+            w._adjacent_hint = True
+            w._apply_style()
+            self._highlighted_neighbors.add((nx, ny))
+            reasons = ["Adjacency +10%"]
+            if w._special:
+                reasons.append("Supercharged +25%")
+            boosts.append((nslot.get("Id", ""), " + ".join(reasons)))
+
+            # Context-aware direction: on hover, arrows point to hovered slot,
+            # indicating incoming adjacency contribution for the focused module.
+            arrow = _arrow_from_to(nx, ny, x, y)
+            lbl = QLabel(f"{arrow} 1.10x", self._grid_widget)
+            lbl.setStyleSheet(
+                "color: #FFD700;"
+                "background: rgba(12, 12, 14, 220);"
+                "border: 1px solid #7a6a1a;"
+                "border-radius: 4px;"
+                "padding: 1px 4px;"
+                "font-size: 10px;"
+                "font-weight: bold;"
+            )
+            lbl.adjustSize()
+            c = center_widget.geometry().center()
+            n = w.geometry().center()
+            px = int((c.x() + n.x()) / 2 - (lbl.width() / 2))
+            py = int((c.y() + n.y()) / 2 - (lbl.height() / 2))
+            lbl.move(px, py)
+            lbl.show()
+            self._connector_labels.append(lbl)
+
+        self._show_hover_popup(x, y, boosts)
+
+    def _show_hover_popup(self, x: int, y: int, boosts: list):
+        for row in self._hover_rows:
+            row.deleteLater()
+        self._hover_rows.clear()
+        if not boosts:
+            self._hover_popup.hide()
+            return
+
+        for item_id, txt in boosts:
+            row_widget = QWidget(self._hover_popup)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            icon = QLabel(row_widget)
+            icon.setFixedSize(18, 18)
+            pix = _get_item_pixmap(item_id, size=18)
+            if pix is not None:
+                icon.setPixmap(pix)
+            name = _get_item_name(item_id)
+            label = QLabel(f"{name}: {txt}", row_widget)
+            label.setStyleSheet("color: #ddd;")
+            row_layout.addWidget(icon)
+            row_layout.addWidget(label)
+            self._hover_popup_layout.addWidget(row_widget)
+            self._hover_rows.append(row_widget)
+
+        origin = self._slot_widgets.get((x, y))
+        if origin is None:
+            self._hover_popup.hide()
+            return
+        self._hover_popup.adjustSize()
+        p = origin.mapTo(self, QPoint(0, 0))
+        px = p.x() + origin.width() + 8
+        py = p.y()
+        max_x = self.width() - self._hover_popup.width() - 4
+        max_y = self.height() - self._hover_popup.height() - 4
+        self._hover_popup.move(max(2, min(px, max_x)), max(2, min(py, max_y)))
+        self._hover_popup.show()
+        self._hover_popup.raise_()
+
+    def _clear_adjacency_highlight(self):
+        if not self._highlighted_neighbors:
+            # still clear connector/popup even if no highlighted neighbors
+            pass
+        for pos in list(self._highlighted_neighbors):
+            w = self._slot_widgets.get(pos)
+            if w is None:
+                continue
+            w._adjacent_hint = False
+            w._apply_style()
+        self._highlighted_neighbors.clear()
+        for lbl in self._connector_labels:
+            lbl.deleteLater()
+        self._connector_labels.clear()
+        self._hover_popup.hide()
+        for row in self._hover_rows:
+            row.deleteLater()
+        self._hover_rows.clear()
 
     def get_slot_widget(self, x: int, y: int) -> Optional[SlotWidget]:
         """Get the SlotWidget at grid position (x, y)."""
@@ -821,8 +1207,12 @@ class InventoryGrid(QWidget):
         )
         if has_tech:
             menu.addSeparator()
-            opt_action = menu.addAction("Optimize Tech Layout")
-            opt_action.triggered.connect(self._optimize_layout)
+            opt_bal = menu.addAction("Optimize Tech Layout (Balanced)")
+            opt_bal.triggered.connect(lambda: self._optimize_layout("balanced", "Balanced"))
+            opt_dps = menu.addAction("Optimize for DPS")
+            opt_dps.triggered.connect(lambda: self._optimize_layout("dps", "DPS"))
+            opt_end = menu.addAction("Optimize for Endurance")
+            opt_end.triggered.connect(lambda: self._optimize_layout("endurance", "Endurance"))
 
         menu.popup(widget.mapToGlobal(widget.rect().center()))
 
@@ -942,7 +1332,7 @@ class InventoryGrid(QWidget):
             widget._special = True
             widget._apply_style()
 
-    def _optimize_layout(self):
+    def _optimize_layout(self, mode: str = "balanced", label: str = "Balanced"):
         """Run the tech layout optimizer on the current inventory."""
         if self._inventory is None:
             return
@@ -950,14 +1340,15 @@ class InventoryGrid(QWidget):
         from PySide6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Optimize Tech Layout",
-            "Rearrange technology items for maximum adjacency bonuses?\n\n"
+            f"Rearrange technology items for {label} optimization?\n\n"
             "Non-tech items will not be moved.",
         )
         if reply != QMessageBox.Yes:
             return
 
         from nmstoolkit.gui.widgets.slot_optimizer import optimize_tech_layout
-        optimize_tech_layout(self._inventory, _CATALOGUE)
+        self._opt_mode = mode
+        optimize_tech_layout(self._inventory, _CATALOGUE, mode=mode)
         self.set_inventory(self._inventory)
 
     def enable_all_slots(self):

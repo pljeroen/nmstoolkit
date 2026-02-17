@@ -21,6 +21,15 @@ VEHICLE_NAMES = [
 ]
 
 
+def _inventory_has_data(inv: dict) -> bool:
+    if not isinstance(inv, dict):
+        return False
+    for slot in inv.get("Slots", []):
+        if isinstance(slot, dict) and slot.get("Id"):
+            return True
+    return False
+
+
 class VehiclesTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -63,14 +72,15 @@ class VehiclesTab(QWidget):
         layout.addWidget(left)
 
         # Right: inventory tabs
-        right = QTabWidget()
+        self._inv_tabs = QTabWidget()
         self._inv = InventoryGrid("Inventory")
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
-        right.addTab(self._inv, "Inventory")
-        right.addTab(self._inv_tech, "Technology")
-        right.addTab(self._inv_cargo, "Cargo")
-        layout.addWidget(right)
+        self._inv_tabs.addTab(self._inv, "Inventory")
+        self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
+        self._inv_tabs.addTab(self._inv_cargo, "Cargo")
+        self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
+        layout.addWidget(self._inv_tabs)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -125,7 +135,9 @@ class VehiclesTab(QWidget):
         # Inventories
         self._inv.set_inventory(v.get("Inventory", {}))
         self._inv_tech.set_inventory(v.get("Inventory_TechOnly", {}))
-        self._inv_cargo.set_inventory(v.get("Inventory_Cargo", {}))
+        cargo_inv = v.get("Inventory_Cargo", {})
+        self._inv_cargo.set_inventory(cargo_inv)
+        self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
 
     def _on_name_changed(self):
         v = self._current_vehicle()

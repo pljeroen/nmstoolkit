@@ -105,6 +105,11 @@ class TestCorvetteTabCreate:
         tab = CorvetteTab()
         assert tab is not None
 
+    def test_build_grid_hidden_before_loading_data(self, qapp):
+        tab = CorvetteTab()
+        assert tab._inv_tabs.isHidden()
+        assert not tab._right_placeholder.isHidden()
+
     def test_empty_state_when_no_corvettes(self, qapp):
         tab = CorvetteTab()
         psd = _make_psd()
