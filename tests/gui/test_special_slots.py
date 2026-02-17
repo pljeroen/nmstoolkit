@@ -75,8 +75,8 @@ class TestSpecialSlotRendering:
     def test_special_slot_style_contains_gold_border(self):
         """Style for special slots should use a full gold border."""
         style = _make_slot_style("#2d3a5a", "#48a", special=True)
-        assert _SPECIAL_BORDER in style
-        assert f"border: 2px solid {_SPECIAL_BORDER}" in style
+        assert f"border: 3px solid {_SPECIAL_BORDER}" in style
+        assert "border: 1px solid #48a" not in style
 
     def test_non_special_slot_style_no_gold(self):
         """Style for normal slots should NOT contain gold border."""

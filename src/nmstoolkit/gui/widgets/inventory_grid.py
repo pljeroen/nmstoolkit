@@ -31,7 +31,7 @@ _TYPE_COLORS = {
 }
 _EMPTY_COLORS = ("#2a2a2e", "#555")
 _LOCKED_COLORS = ("#1a1a1e", "#333")
-_SPECIAL_BORDER = "#dd2"  # Gold — supercharged slot accent
+_SPECIAL_BORDER = "#FFD700"  # Bright gold — supercharged slot accent
 
 _MIME_TYPE = "application/x-nms-slot-pos"
 
@@ -287,16 +287,15 @@ def _make_slot_style(
     bg: str, border: str, left_accent: str = "", special: bool = False,
 ) -> str:
     """Build a stylesheet string for a slot widget."""
+    effective_border = f"3px solid {_SPECIAL_BORDER}" if special else f"1px solid {border}"
     style = (
         f"background: qlineargradient("
         f"x1:0, y1:0, x2:1, y2:1, "
         f"stop:0 {bg}, stop:1 {_darken(bg)});"
-        f"border: 1px solid {border};"
+        f"border: {effective_border};"
         f"border-radius: 3px;"
     )
-    if special:
-        style += f"border: 2px solid {_SPECIAL_BORDER};"
-    elif left_accent:
+    if not special and left_accent:
         style += f"border-left: 3px solid {left_accent};"
     return style
 
@@ -375,6 +374,27 @@ class SlotWidget(QWidget):
         else:
             bg, border = _EMPTY_COLORS
             self.setStyleSheet(_make_slot_style(bg, border, special=self._special))
+
+    def paintEvent(self, event):
+        """Ensure special-slot border is visible even if stylesheet precedence varies."""
+        super().paintEvent(event)
+        if not self._special:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QColor(_SPECIAL_BORDER)
+        painter.setPen(pen)
+        # 3px stroke to match stylesheet intent.
+        for inset in (0, 1, 2):
+            painter.drawRoundedRect(
+                inset,
+                inset,
+                self.width() - (inset * 2) - 1,
+                self.height() - (inset * 2) - 1,
+                3,
+                3,
+            )
+        painter.end()
 
     @property
     def is_locked(self) -> bool:
