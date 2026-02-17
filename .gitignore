@@ -20,3 +20,7 @@ CLAUDE.md
 
 # Personal workflow files
 SESSION_HANDOFF*.md
+# Local MBINCompiler artifacts
+src/nmstoolkit/data/ExternalTools/MBINCompiler/MBINCompiler-linux
+src/nmstoolkit/data/ExternalTools/MBINCompiler/libMBIN-linux.so
+src/nmstoolkit/data/ExternalTools/MBINCompiler/*.log

@@ -18,6 +18,7 @@ from nmstoolkit.gui.widgets.slot_optimizer import (
     _get_tech_category,
     _neighbors,
     _score_placement,
+    analyze_tech_layout,
     optimize_tech_layout,
 )
 
@@ -70,6 +71,15 @@ class TestTechCategory:
         """Unknown prefix should fall back to first two segments."""
         cat = _get_tech_category("WEIRD_THING_1", None)
         assert cat == "WEIRD_THING"
+
+    def test_catalogue_broad_category_does_not_collapse_prefix_families(self):
+        """Broad catalogue categories should not merge unrelated upgrade families."""
+        class Cat:
+            def find_item(self, _):
+                return {"category": "Ship"}
+        c = Cat()
+        assert _get_tech_category("UP_LASER1", c) == "UP_LASER"
+        assert _get_tech_category("UP_SHIELD1", c) == "UP_SHIELD"
 
 
 class TestNeighbors:
@@ -234,3 +244,85 @@ class TestOptimizeTechLayout:
         optimize_tech_layout(inventory)
 
         assert len(inventory["Slots"]) == original_count
+
+    def test_dps_mode_prioritizes_damage_group_for_special_slots(self):
+        slots = [
+            _make_slot("^UP_LASER1", 0, 0),
+            _make_slot("^UP_LASER2", 1, 0),
+            _make_slot("^UP_SHIELD1", 2, 0),
+            _make_slot("^UP_SHIELD2", 3, 0),
+        ]
+        special = [
+            {"Type": {"InventorySpecialSlotType": "TechBonus"}, "Index": {"X": 4, "Y": 3}},
+            {"Type": {"InventorySpecialSlotType": "TechBonus"}, "Index": {"X": 5, "Y": 3}},
+        ]
+        inventory = _make_inventory(slots, width=6, height=5, special_slots=special)
+        optimize_tech_layout(inventory, mode="dps")
+        laser_pos = {
+            (s["Index"]["X"], s["Index"]["Y"])
+            for s in inventory["Slots"] if s["Id"].startswith("^UP_LASER")
+        }
+        assert len(laser_pos & {(4, 3), (5, 3)}) > 0
+
+    def test_endurance_mode_prioritizes_defense_group_for_special_slots(self):
+        slots = [
+            _make_slot("^UP_LASER1", 0, 0),
+            _make_slot("^UP_LASER2", 1, 0),
+            _make_slot("^UP_SHIELD1", 2, 0),
+            _make_slot("^UP_SHIELD2", 3, 0),
+        ]
+        special = [
+            {"Type": {"InventorySpecialSlotType": "TechBonus"}, "Index": {"X": 4, "Y": 3}},
+            {"Type": {"InventorySpecialSlotType": "TechBonus"}, "Index": {"X": 5, "Y": 3}},
+        ]
+        inventory = _make_inventory(slots, width=6, height=5, special_slots=special)
+        optimize_tech_layout(inventory, mode="endurance")
+        shield_pos = {
+            (s["Index"]["X"], s["Index"]["Y"])
+            for s in inventory["Slots"] if s["Id"].startswith("^UP_SHIELD")
+        }
+        assert len(shield_pos & {(4, 3), (5, 3)}) > 0
+
+
+class _FakeCatalogue:
+    def __init__(self, by_id):
+        self._by_id = by_id
+
+    def find_item(self, item_id):
+        return self._by_id.get(item_id)
+
+
+class TestAnalyzeTechLayout:
+    def test_analysis_does_not_mutate_input(self):
+        inventory = _make_inventory(
+            [
+                _make_slot("^UP_LASER1", 0, 0),
+                _make_slot("^UP_LASER2", 4, 4),
+            ],
+            width=6,
+            height=5,
+        )
+        original = copy.deepcopy(inventory)
+        result = analyze_tech_layout(inventory, None)
+        assert inventory == original
+        assert "current_score" in result
+        assert "optimized_score" in result
+
+    def test_analysis_includes_stat_rows_when_catalogue_has_bonuses(self):
+        inventory = _make_inventory(
+            [
+                _make_slot("^UP_LASER1", 0, 0),
+                _make_slot("^UP_LASER2", 1, 0),
+            ],
+            width=6,
+            height=5,
+        )
+        cat = _FakeCatalogue({
+            "UP_LASER1": {"stat_bonuses": [{"stat": "Ship_Damage", "bonus": 1.0}]},
+            "UP_LASER2": {"stat_bonuses": [{"stat": "Ship_Damage", "bonus": 2.0}]},
+        })
+        result = analyze_tech_layout(inventory, cat)
+        assert len(result["stat_rows"]) >= 1
+        row = next(r for r in result["stat_rows"] if r["stat"] == "Ship_Damage")
+        assert row["current"] > 0
+        assert row["confidence"] == "Estimated"

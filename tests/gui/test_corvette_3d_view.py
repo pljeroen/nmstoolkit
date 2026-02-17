@@ -33,6 +33,7 @@ from nmstoolkit.gui.widgets.corvette_3d_view import (
     _mat4_perspective,
     _mat4_translate,
     _normalize,
+    _row_to_layer,
 )
 from nmstoolkit.gui.tabs.corvette_tab import CorvetteTab
 
@@ -221,3 +222,30 @@ class TestMeshDataApi:
         )
         view.set_mesh_data("B_COK_A", [mesh])
         assert "B_COK_A" in view._mesh_data
+
+
+class TestLayerMapping:
+    def test_row_to_layer_three_bands(self):
+        assert _row_to_layer(0, 11) == 2
+        assert _row_to_layer(3, 11) == 2
+        assert _row_to_layer(4, 11) == 1
+        assert _row_to_layer(7, 11) == 1
+        assert _row_to_layer(8, 11) == 0
+        assert _row_to_layer(11, 11) == 0
+
+    def test_set_modules_assigns_layer_field(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+
+        view = Corvette3DView()
+        inv = {
+            "Width": 10,
+            "Height": 16,
+            "Slots": [
+                {"Id": "^B_WNG_A", "Index": {"X": 1, "Y": 1}},
+                {"Id": "^B_CON_A", "Index": {"X": 1, "Y": 6}},
+                {"Id": "^B_SHL_A", "Index": {"X": 1, "Y": 10}},
+            ],
+        }
+        view.set_modules(inv)
+        layers = [int(s.get("_layer", -1)) for s in view._modules]
+        assert layers == [2, 1, 0]

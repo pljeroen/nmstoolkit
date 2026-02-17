@@ -1,0 +1,351 @@
+{
+  "source": {
+    "pak_dir": "/home/jeroen/dev/NMS_GameFiles/No Man's Sky/GAMEDATA/PCBANKS",
+    "mbin_compiler": "/home/jeroen/dev/nmstoolkit/src/nmstoolkit/data/ExternalTools/MBINCompiler/MBINCompiler-linux",
+    "table": "metadata/reality/tables/nms_reality_gctechnologytable.mbin"
+  },
+  "counts": {
+    "technologies_total": 640,
+    "matched_rows": 16,
+    "figurines": 7,
+    "trails": 9
+  },
+  "rows": [
+    {
+      "id": "T_BOBBLE_APOLLO",
+      "display_name": "APOLLO FIGURINE",
+      "name_key": "UI_BOBBLE_APOLLO_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Weapons_Guns_Damage",
+          "bonus": 8.0,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_ART",
+      "display_name": "ARTEMIS FIGURINE",
+      "name_key": "UI_BOBBLE_ARTEMIS_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.05,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_ATLAS",
+      "display_name": "ATLAS FIGURINE",
+      "name_key": "UI_BOBBLE_ATLAS_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Hyperdrive_JumpDistance",
+          "bonus": 50.0,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_NADA",
+      "display_name": "NADA FIGURINE",
+      "name_key": "UI_BOBBLE_NADA_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Launcher_TakeOffCost",
+          "bonus": 0.9,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_NULL",
+      "display_name": "-NULL- FIGURINE",
+      "name_key": "UI_BOBBLE_NULL_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Armour_Shield_Strength",
+          "bonus": 0.05,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_OCTO",
+      "display_name": "TENTACLED FIGURINE",
+      "name_key": "UI_S15_FISH_BOBBLE",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.05,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_BOBBLE_POLO",
+      "display_name": "POLO FIGURINE",
+      "name_key": "UI_BOBBLE_POLO_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_BoostManeuverability",
+          "bonus": 1.05,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "FUEL1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_ATLAS",
+      "display_name": "AERON STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_ATLAS_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_DARK",
+      "display_name": "STEALTH STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_DARK_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_GOLD",
+      "display_name": "GOLDEN STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_GOLD_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_GREEN",
+      "display_name": "EMERIL STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_GREEN_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_PIRATE",
+      "display_name": "SPUTTERING STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_PIRATE_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_PLASMA",
+      "display_name": "PLASMA STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_PLASMA_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_RAINBOW",
+      "display_name": "CHROMATIC STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_RAINBOW_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_RED",
+      "display_name": "CADMIUM STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_RED_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    },
+    {
+      "id": "T_SHIP_ROGUE",
+      "display_name": "TEMPORAL STARSHIP TRAIL",
+      "name_key": "UI_SHIPTRAIL_ROGUE_NAME",
+      "category": "AllShips",
+      "rarity": "Impossible",
+      "stat_bonuses": [
+        {
+          "stat": "Ship_Boost",
+          "bonus": 1.01,
+          "level": 1
+        }
+      ],
+      "requirements": [
+        {
+          "id": "LAND1",
+          "type": "Substance",
+          "amount": 10
+        }
+      ]
+    }
+  ]
+}

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtWidgets import QToolTip
 
 from nmstoolkit.core.mesh_data import Mesh
 
@@ -55,6 +56,10 @@ _MODULE_CATEGORIES = {
     "B_DECO": "Decoration",
 }
 
+_LAYER_COUNT = 3
+_LAYER_HEIGHT = 0.9
+_INVERT_LAYER_ORDER = True
+
 
 def _get_module_category(item_id: str) -> str:
     """Get category name for a module ID."""
@@ -69,6 +74,25 @@ def _get_module_color(item_id: str) -> Tuple[float, float, float]:
     """Get RGB color for a module ID."""
     cat = _get_module_category(item_id)
     return _MODULE_COLORS.get(cat, (0.4, 0.4, 0.4))
+
+
+def _row_to_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> int:
+    """Map save-grid rows into fixed deck layers."""
+    if layer_count <= 1:
+        return 0
+    rows = max(1, max_row + 1)
+    band = max(1, math.ceil(rows / layer_count))
+    layer = max(0, min(layer_count - 1, row // band))
+    if _INVERT_LAYER_ORDER:
+        layer = (layer_count - 1) - layer
+    return layer
+
+
+def _row_in_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> int:
+    """Return local row coordinate inside the selected layer grid."""
+    rows = max(1, max_row + 1)
+    band = max(1, math.ceil(rows / layer_count))
+    return max(0, min(band - 1, row % band))
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +300,77 @@ class _GpuMesh:
         self.index_count = index_count
 
 
+def _merge_meshes(meshes: List[Mesh]) -> Mesh:
+    """Merge multiple sub-meshes into one mesh for single draw call."""
+    if not meshes:
+        return Mesh.empty()
+    if len(meshes) == 1:
+        return meshes[0]
+
+    vertices = []
+    normals = []
+    uvs = []
+    indices = []
+    base = 0
+    for mesh in meshes:
+        vertices.extend(mesh.vertices)
+        normals.extend(mesh.normals)
+        uvs.extend(mesh.uvs)
+        indices.extend(i + base for i in mesh.indices)
+        base += len(mesh.vertices)
+    return Mesh(
+        vertices=tuple(vertices),
+        normals=tuple(normals),
+        uvs=tuple(uvs),
+        indices=tuple(indices),
+    )
+
+
+def _fit_meshes_to_cell(meshes: List[Mesh]) -> List[Mesh]:
+    """Scale/center meshes to fit one inventory cell footprint."""
+    if not meshes:
+        return meshes
+    all_verts = [v for m in meshes for v in m.vertices]
+    if not all_verts:
+        return meshes
+
+    min_x = min(v[0] for v in all_verts)
+    min_y = min(v[1] for v in all_verts)
+    min_z = min(v[2] for v in all_verts)
+    max_x = max(v[0] for v in all_verts)
+    max_y = max(v[1] for v in all_verts)
+    max_z = max(v[2] for v in all_verts)
+
+    sx = max_x - min_x
+    sy = max_y - min_y
+    sz = max_z - min_z
+    max_dim = max(sx, sy, sz, 1e-6)
+    scale = 0.9 / max_dim
+    cx = (min_x + max_x) * 0.5
+    cy = (min_y + max_y) * 0.5
+    cz = (min_z + max_z) * 0.5
+
+    fitted: List[Mesh] = []
+    for mesh in meshes:
+        verts = tuple(
+            (
+                (vx - cx) * scale,
+                (vy - cy) * scale,
+                (vz - cz) * scale,
+            )
+            for vx, vy, vz in mesh.vertices
+        )
+        fitted.append(
+            Mesh(
+                vertices=verts,
+                normals=mesh.normals,
+                uvs=mesh.uvs,
+                indices=mesh.indices,
+            )
+        )
+    return fitted
+
+
 # ---------------------------------------------------------------------------
 # Main widget
 # ---------------------------------------------------------------------------
@@ -294,7 +389,8 @@ class Corvette3DView(QOpenGLWidget):
         self._modules: List[dict] = []
         self._grid_width = 10
         self._grid_height = 16
-        self._selected: Optional[Tuple[int, int]] = None
+        self._layer_rows = 6
+        self._selected: Optional[Tuple[int, int, int]] = None
 
         # Camera
         self._cam_yaw = 45.0
@@ -315,6 +411,8 @@ class Corvette3DView(QOpenGLWidget):
         self._mesh_cache: Dict[str, _GpuMesh] = {}  # module_id → GPU mesh
         self._texture_cache: Dict[str, int] = {}  # module_id → GL texture ID
         self._mesh_data: Dict[str, List[Mesh]] = {}  # module_id → domain meshes
+        self._show_grid = True
+        self._layering_enabled = True
 
         self.setMinimumSize(400, 300)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -323,16 +421,41 @@ class Corvette3DView(QOpenGLWidget):
         """Set module data from a CorvetteStorageInventory dict."""
         self._grid_width = inventory.get("Width", 10)
         self._grid_height = inventory.get("Height", 16)
-        self._modules = [
-            s for s in inventory.get("Slots", [])
-            if s.get("Id", "")
-        ]
-        self._cam_target = [self._grid_width / 2.0, 0.0, self._grid_height / 2.0]
+        slots = [s for s in inventory.get("Slots", []) if s.get("Id", "")]
+        max_row = 0
+        for slot in slots:
+            idx = slot.get("Index", {})
+            max_row = max(max_row, int(idx.get("Y", 0)))
+        self._layer_rows = max(1, math.ceil(max(1, max_row + 1) / _LAYER_COUNT))
+        self._modules = []
+        for slot in slots:
+            idx = slot.get("Index", {})
+            row = int(idx.get("Y", 0))
+            if self._layering_enabled:
+                layer = _row_to_layer(row, max_row)
+                layer_row = _row_in_layer(row, max_row)
+            else:
+                layer = 0
+                layer_row = row
+            s = dict(slot)
+            s["_layer"] = layer
+            s["_layer_row"] = layer_row
+            self._modules.append(s)
+        if self._layering_enabled:
+            self._cam_target = [
+                self._grid_width / 2.0,
+                ((_LAYER_COUNT - 1) * _LAYER_HEIGHT) * 0.5,
+                self._layer_rows / 2.0,
+            ]
+        else:
+            self._cam_target = [self._grid_width / 2.0, 0.0, self._grid_height / 2.0]
+        if self._gl_ready:
+            self._grid_gpu = self._rebuild_grid_vao(self._grid_width, self._layer_rows)
         self.update()
 
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
-        self._mesh_data[module_id] = meshes
+        self._mesh_data[module_id] = _fit_meshes_to_cell(meshes)
         # Invalidate cached GPU mesh so it gets re-uploaded
         self._mesh_cache.pop(module_id, None)
 
@@ -341,6 +464,14 @@ class Corvette3DView(QOpenGLWidget):
         # Texture upload happens in paintGL when GL context is current
         self._pending_textures = getattr(self, "_pending_textures", {})
         self._pending_textures[module_id] = png_path
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self._show_grid = bool(visible)
+        self.update()
+
+    def set_layering_enabled(self, enabled: bool) -> None:
+        self._layering_enabled = bool(enabled)
+        self.update()
 
     def initializeGL(self):
         """Set up OpenGL state and compile shaders."""
@@ -401,7 +532,8 @@ class Corvette3DView(QOpenGLWidget):
         self._process_pending_textures()
 
         # Draw grid
-        self._draw_grid(vp)
+        if self._show_grid:
+            self._draw_grid(vp)
 
         # Draw modules
         light_dir = _normalize((0.5, 0.8, 0.6))
@@ -417,15 +549,17 @@ class Corvette3DView(QOpenGLWidget):
 
         for slot in self._modules:
             idx = slot.get("Index", {})
-            x, z = idx.get("X", 0), idx.get("Y", 0)
+            x = idx.get("X", 0)
+            z = int(slot.get("_layer_row", idx.get("Y", 0)))
+            layer = int(slot.get("_layer", 0))
             item_id = slot.get("Id", "")
             r, g, b = _get_module_color(item_id)
 
-            is_selected = self._selected == (x, z)
+            is_selected = self._selected == (x, z, layer)
             if is_selected:
                 r, g, b = min(1.0, r + 0.3), min(1.0, g + 0.3), min(1.0, b + 0.3)
 
-            model = _mat4_translate(float(x), 0.0, float(z))
+            model = _mat4_translate(float(x), float(layer) * _LAYER_HEIGHT, float(z))
             mvp = _mat4_multiply(vp, model)
 
             GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, mvp)
@@ -449,6 +583,79 @@ class Corvette3DView(QOpenGLWidget):
 
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
+
+    def _compute_vp(self) -> List[float]:
+        """Compute the current view-projection matrix using camera state."""
+        w, h = self.width(), self.height()
+        if h <= 0:
+            h = 1
+        aspect = w / h
+        proj = _mat4_perspective(45.0, aspect, 0.1, 100.0)
+
+        yaw_rad = math.radians(self._cam_yaw)
+        pitch_rad = math.radians(self._cam_pitch)
+        eye = (
+            self._cam_target[0] + self._cam_distance * math.cos(pitch_rad) * math.sin(yaw_rad),
+            self._cam_target[1] + self._cam_distance * math.sin(pitch_rad),
+            self._cam_target[2] + self._cam_distance * math.cos(pitch_rad) * math.cos(yaw_rad),
+        )
+        view = _mat4_look_at(eye, tuple(self._cam_target), (0, 1, 0))
+        return _mat4_multiply(proj, view)
+
+    def _project_world_to_screen(self, vp: List[float], world: Tuple[float, float, float]) -> Optional[Tuple[float, float]]:
+        """Project world point to viewport pixel coordinates."""
+        x, y, z = world
+        clip_x = vp[0] * x + vp[4] * y + vp[8] * z + vp[12]
+        clip_y = vp[1] * x + vp[5] * y + vp[9] * z + vp[13]
+        clip_w = vp[3] * x + vp[7] * y + vp[11] * z + vp[15]
+        if abs(clip_w) < 1e-6:
+            return None
+        ndc_x = clip_x / clip_w
+        ndc_y = clip_y / clip_w
+        if ndc_x < -1.2 or ndc_x > 1.2 or ndc_y < -1.2 or ndc_y > 1.2:
+            return None
+        sx = (ndc_x * 0.5 + 0.5) * self.width()
+        sy = (1.0 - (ndc_y * 0.5 + 0.5)) * self.height()
+        return (sx, sy)
+
+    def _pick_module_at_screen(self, pos: QPoint, radius_px: float = 20.0) -> Optional[dict]:
+        """Pick nearest module by projected center in screen space."""
+        if not self._modules:
+            return None
+        vp = self._compute_vp()
+        px, py = float(pos.x()), float(pos.y())
+        best = None
+        best_d2 = radius_px * radius_px
+        for slot in self._modules:
+            idx = slot.get("Index", {})
+            x = idx.get("X", 0)
+            z = int(slot.get("_layer_row", idx.get("Y", 0)))
+            layer = int(slot.get("_layer", 0))
+            p = self._project_world_to_screen(vp, (float(x), float(layer) * _LAYER_HEIGHT, float(z)))
+            if p is None:
+                continue
+            dx = p[0] - px
+            dy = p[1] - py
+            d2 = dx * dx + dy * dy
+            if d2 <= best_d2:
+                best_d2 = d2
+                best = slot
+        return best
+
+    @staticmethod
+    def _slot_tooltip(slot: dict) -> str:
+        idx = slot.get("Index", {})
+        x, y = idx.get("X", 0), idx.get("Y", 0)
+        layer = int(slot.get("_layer", 0))
+        layer_row = int(slot.get("_layer_row", y))
+        item_id = str(slot.get("Id", "")).lstrip("^")
+        category = _get_module_category(item_id)
+        if slot.get("_no_layer_tooltip"):
+            return f"{item_id}\nCategory: {category}\nGrid: ({x}, {y})"
+        return (
+            f"{item_id}\nCategory: {category}\nGrid: ({x}, {y})\n"
+            f"Layer: {layer + 1}/{_LAYER_COUNT}\nLayer Grid: ({x}, {layer_row})"
+        )
 
     # ---- Shader compilation ----
 
@@ -548,8 +755,9 @@ class Corvette3DView(QOpenGLWidget):
             return self._mesh_cache[module_id]
 
         if module_id in self._mesh_data and self._mesh_data[module_id]:
-            # Upload first mesh from the list
-            gpu = self._upload_mesh(self._mesh_data[module_id][0])
+            # Merge all sub-meshes so layered modules render as one unit.
+            merged = _merge_meshes(self._mesh_data[module_id])
+            gpu = self._upload_mesh(merged)
             self._mesh_cache[module_id] = gpu
             return gpu
 
@@ -560,7 +768,7 @@ class Corvette3DView(QOpenGLWidget):
 
     def _build_grid_vao(self) -> _GpuMesh:
         """Build grid lines VAO."""
-        return self._rebuild_grid_vao(self._grid_width, self._grid_height)
+        return self._rebuild_grid_vao(self._grid_width, self._layer_rows)
 
     def _rebuild_grid_vao(self, w: int, h: int) -> _GpuMesh:
         GL = self._GL
@@ -594,11 +802,14 @@ class Corvette3DView(QOpenGLWidget):
         loc_mvp = GL.glGetUniformLocation(self._grid_shader_program, "uMVP")
         loc_color = GL.glGetUniformLocation(self._grid_shader_program, "uColor")
 
-        GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, vp)
-        GL.glUniform3f(loc_color, 0.3, 0.3, 0.35)
-
         GL.glBindVertexArray(self._grid_gpu.vao)
-        GL.glDrawArrays(GL.GL_LINES, 0, self._grid_gpu.index_count)
+        for layer in range(_LAYER_COUNT):
+            model = _mat4_translate(0.0, float(layer) * _LAYER_HEIGHT, 0.0)
+            mvp = _mat4_multiply(vp, model)
+            shade = 0.28 + 0.04 * layer
+            GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, mvp)
+            GL.glUniform3f(loc_color, shade, shade, shade + 0.05)
+            GL.glDrawArrays(GL.GL_LINES, 0, self._grid_gpu.index_count)
         GL.glBindVertexArray(0)
 
     # ---- Textures ----
@@ -642,6 +853,16 @@ class Corvette3DView(QOpenGLWidget):
     def mousePressEvent(self, event: QMouseEvent):
         self._last_mouse_pos = event.position().toPoint()
         self._mouse_button = event.button()
+        picked = self._pick_module_at_screen(self._last_mouse_pos)
+        if picked is not None:
+            idx = picked.get("Index", {})
+            x = idx.get("X", 0)
+            z = int(picked.get("_layer_row", idx.get("Y", 0)))
+            layer = int(picked.get("_layer", 0))
+            self._selected = (x, z, layer)
+            self.module_selected.emit(x, z, str(picked.get("Id", "")).lstrip("^"))
+            QToolTip.showText(event.globalPosition().toPoint(), self._slot_tooltip(picked), self)
+            self.update()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -664,6 +885,11 @@ class Corvette3DView(QOpenGLWidget):
             self.update()
 
         self._last_mouse_pos = pos
+        picked = self._pick_module_at_screen(pos)
+        if picked is not None:
+            QToolTip.showText(event.globalPosition().toPoint(), self._slot_tooltip(picked), self)
+        else:
+            QToolTip.hideText()
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):

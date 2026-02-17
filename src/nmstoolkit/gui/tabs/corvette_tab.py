@@ -1,11 +1,14 @@
 """Corvette editor tab — list completed corvettes + active draft, with inventory editing."""
 
 from collections import Counter
+import math
 from pathlib import Path
+import shutil
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -21,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
-from nmstoolkit.paths import cache_meshes_dir
+from nmstoolkit.paths import cache_meshes_dir, external_tools_dir
 
 # Module category mapping from ID prefix to human-readable category.
 _MODULE_CATEGORIES = {
@@ -81,6 +84,299 @@ def _inventory_has_data(inv: dict) -> bool:
         if isinstance(slot, dict) and slot.get("Id"):
             return True
     return False
+
+
+def _derive_module_id(path_parts: list[str]) -> str:
+    """Derive corvette module ID (e.g. B_COK_A) from a SCENE path."""
+    try:
+        parts_idx = path_parts.index("parts")
+        part_dir = path_parts[parts_idx + 1] if parts_idx + 1 < len(path_parts) else ""
+    except ValueError:
+        return ""
+    if not part_dir:
+        return ""
+    return "B_" + part_dir.upper()
+
+
+def _scene_candidates_for_module(module_id: str) -> list[str]:
+    """Return likely BIGGS module scene paths for a corvette module id."""
+    uid = module_id.upper().lstrip("^")
+    base = "models/common/spacecraft/biggs/modules/"
+    parts_base = "models/common/spacecraft/biggs/modules/parts/"
+    parts = uid.split("_")
+    if len(parts) < 2 or parts[0] != "B":
+        return []
+
+    if parts[1] == "COK" and len(parts) >= 3:
+        v = parts[2].lower()
+        return [
+            f"{parts_base}cockpit_1x2_{v}.scene.mbin",
+            f"{parts_base}cockpit_1x2_{v}_ext.scene.mbin",
+            f"{base}cockpit_{v}_1x2_placement.scene.mbin",
+        ]
+
+    if parts[1] == "HAB1" and len(parts) >= 3:
+        v = parts[2].lower()
+        return [
+            f"{parts_base}hab_{v}_1x1_core.scene.mbin",
+            f"{base}hab_{v}_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "HAB" and len(parts) >= 3:
+        v = parts[2].lower()
+        return [
+            f"{parts_base}hab_{v}_1x2_core.scene.mbin",
+            f"{base}hab_{v}_1x2_placement.scene.mbin",
+        ]
+
+    if parts[1] == "WNG" and len(parts) >= 3:
+        if parts[2] == "O" and len(parts) >= 4:
+            n = parts[3].lower()
+            return [
+                f"{parts_base}wing_{n}_l.scene.mbin",
+                f"{parts_base}wing_{n}_r.scene.mbin",
+                f"{parts_base}wing_{n}.scene.mbin",
+                f"{base}ext_wing_o_{n}_1x2_placement.scene.mbin",
+                f"{base}ext_wing_o_{n}_1x2_r_placement.scene.mbin",
+            ]
+        v = parts[2].lower()
+        return [
+            f"{parts_base}wing_{v}_l.scene.mbin",
+            f"{parts_base}wing_{v}_r.scene.mbin",
+            f"{parts_base}wing_{v}.scene.mbin",
+            f"{base}ext_wing_{v}_1x2_placement.scene.mbin",
+            f"{base}ext_wing_{v}_1x2_r_placement.scene.mbin",
+            f"{base}ext_wing_{v}_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "CON" and len(parts) >= 4 and parts[2] == "L":
+        n = parts[3].lower()
+        return [
+            f"{parts_base}connectors/connector_1x1_l_{n}.scene.mbin",
+            f"{base}ext_connector_1x1_l_{n}_placement.scene.mbin",
+        ]
+
+    if parts[1] == "CON2" and len(parts) >= 3:
+        n = parts[2].lower()
+        return [
+            f"{parts_base}connectors/connector_1x1_r_{n}.scene.mbin",
+            f"{base}ext_connector_1x1_r_{n}_placement.scene.mbin",
+        ]
+
+    if parts[1] == "CON" and len(parts) >= 3:
+        n = parts[2].lower()
+        return [
+            f"{parts_base}connectors/connector_1x1_{n}.scene.mbin",
+            f"{base}ext_connector_1x1_{n}_placement.scene.mbin",
+        ]
+
+    if parts[1] == "TRU":
+        if len(parts) >= 3 and parts[2] in {"A", "B", "C"}:
+            v = parts[2].lower()
+            return [
+                f"{parts_base}backthruster_{v}.scene.mbin",
+                f"{base}ext_backthrusters_{v}_1x1_placement.scene.mbin",
+                f"{base}ext_thrusters_1x1_placement.scene.mbin",
+            ]
+        return [
+            f"{parts_base}backthruster_a.scene.mbin",
+            f"{base}ext_thrusters_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "TUR":
+        return [f"{base}ext_turret_1x1_placement.scene.mbin"]
+
+    if parts[1] == "LND":
+        v = parts[2].lower() if len(parts) >= 3 else "a"
+        return [
+            f"{parts_base}landinggear_leg_{v}.scene.mbin",
+            f"{base}ext_landinggear_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "SHL" and len(parts) >= 3:
+        v = parts[2].lower()
+        return [
+            f"{parts_base}shieldgenerator_{v}.scene.mbin",
+            f"{base}ext_shieldgen_{v}_1x1_placement.scene.mbin",
+            f"{base}ext_shieldgen_a_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "ALK" and len(parts) >= 3:
+        v = parts[2].lower()
+        return [
+            f"{parts_base}airlock_nesw_{v}.scene.mbin",
+            f"{parts_base}airlock_ew_{v}.scene.mbin",
+            f"{base}exthatch_airlock_{v}_1x1_placement.scene.mbin",
+            f"{base}exthatch_airlock_z_{v}_1x1_placement.scene.mbin",
+        ]
+
+    if parts[1] == "GEN" and len(parts) >= 3:
+        n = parts[2].lower()
+        return [
+            f"{parts_base}generator_{n}.scene.mbin",
+            f"{base}ext_gen_1x1_{n}_placement.scene.mbin",
+        ]
+
+    if parts[1] == "STR":
+        candidates = []
+        if len(parts) >= 4:
+            direction = parts[3].lower()
+            v = parts[2].lower() if len(parts) >= 3 else "a"
+            candidates.append(f"{parts_base}structural/structural_1x1_{direction}_0.scene.mbin")
+            candidates.append(f"{parts_base}structural/structural_1x1_{direction}_{v}.scene.mbin")
+            candidates.append(f"{base}ext_structural_1x1_{direction}_placement.scene.mbin")
+            candidates.append(f"{base}ext_structural_1x1_y_{direction}_placement.scene.mbin")
+        candidates.append(f"{base}ext_structural_1x1_placement.scene.mbin")
+        return candidates
+
+    if parts[1] == "DECO":
+        return [
+            f"{parts_base}bay_a.scene.mbin",
+            f"{base}bay_a_1x1_placement.scene.mbin",
+        ]
+
+    return []
+
+
+def _normalize_ref(path: str) -> str:
+    return path.replace("\\", "/").lower()
+
+
+def _rotate_xyz(v: tuple[float, float, float], rot_deg: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Rotate vector by Euler XYZ degrees."""
+    x, y, z = v
+    rx, ry, rz = (math.radians(rot_deg[0]), math.radians(rot_deg[1]), math.radians(rot_deg[2]))
+
+    cy, sy = math.cos(rx), math.sin(rx)
+    y, z = y * cy - z * sy, y * sy + z * cy
+
+    cx, sx = math.cos(ry), math.sin(ry)
+    x, z = x * cx + z * sx, -x * sx + z * cx
+
+    cz, sz = math.cos(rz), math.sin(rz)
+    x, y = x * cz - y * sz, x * sz + y * cz
+    return (x, y, z)
+
+
+def _combine_transform(parent, local):
+    """Compose local transform into parent transform (approximate Euler composition)."""
+    from nmstoolkit.core.mesh_data import Transform
+
+    psx, psy, psz = parent.scale
+    lpx, lpy, lpz = local.position
+    sp = (lpx * psx, lpy * psy, lpz * psz)
+    rp = _rotate_xyz(sp, parent.rotation)
+    wx = parent.position[0] + rp[0]
+    wy = parent.position[1] + rp[1]
+    wz = parent.position[2] + rp[2]
+    return Transform(
+        position=(wx, wy, wz),
+        rotation=(
+            parent.rotation[0] + local.rotation[0],
+            parent.rotation[1] + local.rotation[1],
+            parent.rotation[2] + local.rotation[2],
+        ),
+        scale=(psx * local.scale[0], psy * local.scale[1], psz * local.scale[2]),
+    )
+
+
+def _scene_geometry_instances(scene_root) -> list[tuple[str, object]]:
+    """Flatten scene tree to (geometry_ref, world_transform) instances."""
+    from nmstoolkit.core.mesh_data import Transform
+
+    out: list[tuple[str, object]] = []
+
+    def walk(node, world):
+        composed = _combine_transform(world, node.transform)
+        if node.geometry_ref:
+            out.append((node.geometry_ref, composed))
+        for child in node.children:
+            walk(child, composed)
+
+    walk(scene_root, Transform.identity())
+    return out
+
+
+def _normalize_vec3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = v
+    m = math.sqrt(x * x + y * y + z * z)
+    if m <= 1e-9:
+        return (0.0, 0.0, 1.0)
+    return (x / m, y / m, z / m)
+
+
+def _apply_transform_to_mesh(mesh, transform):
+    """Apply world transform to mesh vertices/normals."""
+    px, py, pz = transform.position
+    sx, sy, sz = transform.scale
+    rot = transform.rotation
+
+    vertices = []
+    for vx, vy, vz in mesh.vertices:
+        x, y, z = vx * sx, vy * sy, vz * sz
+        x, y, z = _rotate_xyz((x, y, z), rot)
+        vertices.append((x + px, y + py, z + pz))
+
+    normals = []
+    for nx, ny, nz in mesh.normals:
+        x, y, z = _rotate_xyz((nx, ny, nz), rot)
+        normals.append(_normalize_vec3((x, y, z)))
+
+    return type(mesh)(
+        vertices=tuple(vertices),
+        normals=tuple(normals),
+        uvs=mesh.uvs,
+        indices=mesh.indices,
+    )
+
+
+def _required_corvette_modules(inv: dict) -> set[str]:
+    """Return unique corvette module IDs present in inventory slots."""
+    required: set[str] = set()
+    if not isinstance(inv, dict):
+        return required
+    for slot in inv.get("Slots", []):
+        if not isinstance(slot, dict):
+            continue
+        item_id = str(slot.get("Id", "")).lstrip("^").upper()
+        if item_id.startswith("B_"):
+            required.add(item_id)
+    return required
+
+
+def _resolve_pak_dir(game_dir: Path) -> Optional[Path]:
+    """Resolve PCBANKS path from a user-selected game directory."""
+    pcbanks = game_dir / "GAMEDATA" / "PCBANKS"
+    if pcbanks.exists():
+        return pcbanks
+    pcbanks = game_dir / "PCBANKS"
+    if pcbanks.exists():
+        return pcbanks
+    if game_dir.name.upper() == "PCBANKS" and game_dir.exists():
+        return game_dir
+    return None
+
+
+def _find_mbin_compiler(pak_dir: Path) -> Optional[Path]:
+    """Locate MBINCompiler via ExternalTools, nearby folders, or PATH."""
+    ext_dir = external_tools_dir() / "MBINCompiler"
+    candidates = [
+        ext_dir / "MBINCompiler.exe",
+        ext_dir / "MBINCompiler",
+        ext_dir / "MBINCompiler-linux",
+        Path("/tmp/nms_exml/MBINCompiler"),
+        pak_dir / "MBINCompiler.exe",
+        pak_dir / "MBINCompiler",
+        pak_dir.parent / "MBINCompiler.exe",
+        pak_dir.parent / "MBINCompiler",
+        pak_dir.parent.parent / "MBINCompiler.exe",
+        pak_dir.parent.parent / "MBINCompiler",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    found = shutil.which("MBINCompiler") or shutil.which("MBINCompiler.exe")
+    return Path(found) if found else None
 
 
 def _is_corvette_ship(ship: dict) -> bool:
@@ -210,10 +506,21 @@ class CorvetteTab(QWidget):
         draft_layout = QVBoxLayout(self._draft_container)
         draft_layout.setContentsMargins(0, 0, 0, 0)
 
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+
         self._view_toggle_btn = QPushButton("Switch to 3D View")
         self._view_toggle_btn.setFixedHeight(28)
         self._view_toggle_btn.clicked.connect(self._toggle_draft_view)
-        draft_layout.addWidget(self._view_toggle_btn)
+        controls_layout.addWidget(self._view_toggle_btn)
+
+        self._reload_3d_btn = QPushButton("Reload 3D")
+        self._reload_3d_btn.setFixedHeight(28)
+        self._reload_3d_btn.clicked.connect(self._on_reload_3d)
+        controls_layout.addWidget(self._reload_3d_btn)
+
+        controls_layout.addStretch()
+        draft_layout.addLayout(controls_layout)
 
         self._draft_stack = QStackedWidget()
         self._draft_stack.addWidget(self._inv_draft)  # index 0 = 2D
@@ -318,6 +625,9 @@ class CorvetteTab(QWidget):
             if self._data is not None:
                 draft_inv = self._data.get("CorvetteStorageInventory", {})
                 self._3d_view.set_modules(draft_inv)
+                # Force refresh once when entering 3D so stale cached proxy meshes
+                # don't hide improved gamefile/parts-derived geometry.
+                self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
             self._draft_stack.setCurrentIndex(1)
             self._view_toggle_btn.setText("Switch to 2D Grid")
         else:
@@ -343,6 +653,228 @@ class CorvetteTab(QWidget):
                         self._3d_view.set_texture(module_id, entry.texture_path)
         except Exception:
             pass
+
+    def _load_missing_meshes_from_gamefiles(self, draft_inv: dict, force: bool = False) -> None:
+        """Load missing module meshes directly from gamefiles (on-demand)."""
+        if self._3d_view is None:
+            return
+
+        required = _required_corvette_modules(draft_inv)
+        if not required:
+            return
+
+        if force:
+            for module_id in required:
+                self._3d_view._mesh_data.pop(module_id, None)  # type: ignore[attr-defined]
+                self._3d_view._mesh_cache.pop(module_id, None)  # type: ignore[attr-defined]
+
+        loaded = set(getattr(self._3d_view, "_mesh_data", {}).keys())
+        missing = sorted(required - loaded)
+        if not missing:
+            return
+
+        settings = QSettings("NMSToolkit", "NMSToolkit")
+        game_dir_value = settings.value("game_dir", "")
+        if not game_dir_value:
+            return
+
+        pak_dir = _resolve_pak_dir(Path(str(game_dir_value)))
+        if pak_dir is None:
+            return
+
+        mbin_compiler = _find_mbin_compiler(pak_dir)
+        if mbin_compiler is None:
+            return
+
+        try:
+            from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
+            from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
+            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline, MeshCacheEntry
+            from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
+            from nmstoolkit.core.geometry_parser import parse_geometry
+            from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
+            from nmstoolkit.core.scene_parser import parse_scene
+
+            scene_pak = pak_dir / "NMSARC.EntitySceneMBIN.pak"
+            if not scene_pak.exists():
+                return
+
+            QApplication.processEvents()
+            with HgpakAdapter.from_path(scene_pak) as pak:
+                all_files = pak.list_files()
+                scene_files = {_normalize_ref(p): p for p in all_files}
+                scene_by_module: Dict[str, str] = {}
+                for module_id in missing:
+                    for cand in _scene_candidates_for_module(module_id):
+                        found = scene_files.get(_normalize_ref(cand))
+                        if found:
+                            scene_by_module[module_id] = found
+                            break
+
+                if not scene_by_module:
+                    return
+
+                scene_data = pak.extract(paths=list(scene_by_module.values()))
+
+            converter = MbinCompilerAdapter(mbin_compiler)
+            scene_exml = converter.convert_batch(scene_data)
+            pipeline = CorvetteMeshPipeline(cache_dir=self._mesh_cache_dir())
+
+            # Build required geometry reference set from selected scene EXML.
+            required_geo_refs: set[str] = set()
+            parsed_scene_by_module: Dict[str, object] = {}
+            for module_id, scene_path in scene_by_module.items():
+                exml = scene_exml.get(scene_path)
+                if not exml:
+                    continue
+                scene_node = parse_scene(exml)
+                parsed_scene_by_module[module_id] = scene_node
+                for geo_ref, _world in _scene_geometry_instances(scene_node):
+                    required_geo_refs.add(_normalize_ref(geo_ref))
+
+            if not required_geo_refs:
+                return
+
+            # Geometry binaries live in mesh paks and use .mbin.pc filenames.
+            mesh_paks = sorted(pak_dir.glob("NMSARC.Mesh*.pak"))
+            geo_map: Dict[str, bytes] = {}
+            wanted = set(required_geo_refs)
+            wanted_pc = {g + ".pc" for g in required_geo_refs}
+
+            for mesh_pak in mesh_paks:
+                if not (wanted or wanted_pc):
+                    break
+                with HgpakAdapter.from_path(mesh_pak) as pak:
+                    files = pak.list_files()
+                    known = {_normalize_ref(f): f for f in files}
+                    to_extract: List[str] = []
+                    for ref in list(wanted):
+                        found = known.get(ref)
+                        if found:
+                            to_extract.append(found)
+                            wanted.discard(ref)
+                            continue
+                        found_pc = known.get(ref + ".pc")
+                        if found_pc:
+                            to_extract.append(found_pc)
+                            wanted.discard(ref)
+                    for ref in list(wanted_pc):
+                        found = known.get(ref)
+                        if found:
+                            to_extract.append(found)
+                            wanted_pc.discard(ref)
+                    if not to_extract:
+                        continue
+                    extracted = pak.extract(paths=to_extract)
+                    for geo_path, geo_bytes in extracted.items():
+                        norm = _normalize_ref(geo_path)
+                        geo_map[norm] = geo_bytes
+                        if norm.endswith(".pc"):
+                            geo_map[norm[:-3]] = geo_bytes
+                        geo_map[geo_path] = geo_bytes
+                        geo_map[geo_path.upper()] = geo_bytes
+                        # Also keep paired GEOMETRY.DATA aliases (with/without .pc).
+                        if ".geometry.data.mbin" in norm and norm.endswith(".pc"):
+                            geo_map[norm[:-3]] = geo_bytes
+
+            decoded_mesh_cache: Dict[str, List[object]] = {}
+
+            def _decode_meshes_for_geo(geo_ref_norm: str) -> List[object]:
+                cached = decoded_mesh_cache.get(geo_ref_norm)
+                if cached is not None:
+                    return cached
+
+                geo_bytes = geo_map.get(geo_ref_norm) or geo_map.get(geo_ref_norm + ".pc")
+                if geo_bytes is None:
+                    decoded_mesh_cache[geo_ref_norm] = []
+                    return []
+
+                try:
+                    geo_exml = converter.convert(geo_bytes)
+                except Exception:
+                    geo_exml = ""
+
+                # Prefer cTkGeometryStreamData for modern .mbin.pc assets.
+                data_ref = geo_ref_norm.replace(".geometry.mbin", ".geometry.data.mbin")
+                data_bytes = geo_map.get(data_ref) or geo_map.get(data_ref + ".pc")
+                if data_bytes is not None and geo_exml:
+                    try:
+                        stream_exml = converter.convert(data_bytes)
+                        stream_meshes = parse_geometry_stream_exml(geo_exml, stream_exml)
+                        if stream_meshes:
+                            decoded_mesh_cache[geo_ref_norm] = stream_meshes
+                            return stream_meshes
+                    except Exception:
+                        pass
+
+                # Legacy binary geometry path (non-stream assets).
+                meshes = parse_geometry(geo_bytes)
+                if meshes:
+                    decoded_mesh_cache[geo_ref_norm] = meshes
+                    return meshes
+
+                if not geo_exml:
+                    decoded_mesh_cache[geo_ref_norm] = []
+                    return []
+
+                fallback_meshes = parse_geometry_aabb_fallback(geo_exml)
+                decoded_mesh_cache[geo_ref_norm] = fallback_meshes
+                return fallback_meshes
+
+            for module_id, scene_path in scene_by_module.items():
+                scene_node = parsed_scene_by_module.get(module_id)
+                if scene_node is None:
+                    continue
+
+                module_meshes: List[object] = []
+                first_geo_ref = ""
+                for geo_ref, world_transform in _scene_geometry_instances(scene_node):
+                    geo_ref_norm = _normalize_ref(geo_ref)
+                    if not first_geo_ref:
+                        first_geo_ref = geo_ref
+                    base_meshes = _decode_meshes_for_geo(geo_ref_norm)
+                    if not base_meshes:
+                        continue
+                    module_meshes.extend(_apply_transform_to_mesh(mesh, world_transform) for mesh in base_meshes)
+
+                if module_meshes:
+                    self._3d_view.set_mesh_data(module_id, module_meshes)
+                    pipeline.save_entry(
+                        MeshCacheEntry(
+                            module_id=module_id,
+                            meshes=module_meshes,
+                            texture_path=None,
+                            geometry_ref=first_geo_ref or scene_node.geometry_ref,
+                        )
+                    )
+
+            QApplication.processEvents()
+        except Exception:
+            # Keep 3D experience non-blocking when gamefile read fails.
+            return
+
+    def _on_reload_3d(self) -> None:
+        """Reload current draft meshes from gamefiles."""
+        if self._3d_view is None:
+            self._toggle_draft_view()
+            return
+        if self._data is None:
+            return
+        # Drop persisted mesh cache so loader cannot reuse stale proxy meshes.
+        try:
+            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline
+
+            pipeline = CorvetteMeshPipeline(cache_dir=self._mesh_cache_dir())
+            for module_id in pipeline.list_cached():
+                path = self._mesh_cache_dir() / f"{module_id}.mesh.json"
+                if path.exists():
+                    path.unlink()
+        except Exception:
+            pass
+        draft_inv = self._data.get("CorvetteStorageInventory", {})
+        self._3d_view.set_modules(draft_inv)
+        self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
+        self._3d_view.update()
 
     @staticmethod
     def _mesh_cache_dir() -> Path:

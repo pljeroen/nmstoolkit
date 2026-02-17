@@ -1,5 +1,7 @@
 """Companions (pets) editor tab."""
 
+from typing import Optional
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -11,12 +13,19 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QScrollArea,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
+from nmstoolkit.gui.preview_support import (
+    find_scene_resource_filename,
+    load_template_preview_meshes,
+    resolve_companion_scene,
+    seed_to_text,
+)
 
 # Friendly names for common creature IDs
 _CREATURE_NAMES = {
@@ -82,6 +91,7 @@ class CompanionsTab(QWidget):
         self._data = None
         self._companions = []
         self._current_index = -1
+        self._preview_view: Optional[QWidget] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -115,8 +125,9 @@ class CompanionsTab(QWidget):
 
         layout.addWidget(left)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
+        self._tabs = QTabWidget()
+        general_tab = QWidget()
+        right_layout = QVBoxLayout(general_tab)
 
         # Identity
         details = QGroupBox("Companion Details")
@@ -240,7 +251,27 @@ class CompanionsTab(QWidget):
         right_layout.addWidget(desc_group)
 
         right_layout.addStretch()
-        layout.addWidget(right)
+        self._tabs.addTab(general_tab, "General")
+
+        self._preview_tab = QWidget()
+        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_identity = QLabel("Seed: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_fidelity = QLabel(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        self._preview_fidelity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a companion")
+        self._preview_status.setWordWrap(True)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_fidelity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_placeholder, 1)
+        self._tabs.addTab(self._preview_tab, "Preview")
+        layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -338,6 +369,7 @@ class CompanionsTab(QWidget):
             self._descriptors_label.setText("None")
 
         self._rebuild_descriptor_edits(active_descs)
+        self._update_preview(pet)
 
     def _rebuild_descriptor_edits(self, active_descs):
         """Rebuild the dynamic descriptor edit list and selection list to match data."""
@@ -512,3 +544,59 @@ class CompanionsTab(QWidget):
             return
         vault.delete_from_vault(self._vault_entries[row])
         self._refresh_vault()
+
+    def _ensure_preview_view(self) -> None:
+        if self._preview_view is not None:
+            return
+        try:
+            from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        except Exception:
+            self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
+            return
+        self._preview_view = Corvette3DView(self._preview_tab)
+        if hasattr(self._preview_view, "set_grid_visible"):
+            self._preview_view.set_grid_visible(False)
+        if hasattr(self._preview_view, "set_layering_enabled"):
+            self._preview_view.set_layering_enabled(False)
+        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_placeholder.hide()
+        self._preview_view.show()
+
+    def _load_preview_meshes(self, resource_filename: str):
+        return load_template_preview_meshes(resource_filename)
+
+    def _update_preview(self, companion: dict) -> None:
+        resource = find_scene_resource_filename(companion)
+        if not resource:
+            resource = resolve_companion_scene(str(companion.get("CreatureID", "")))
+        seed = seed_to_text(companion.get("CreatureSeed"))
+        if seed == "—":
+            seed = seed_to_text(companion.get("Seed"))
+        if seed == "—":
+            resource_obj = companion.get("Resource", {})
+            if isinstance(resource_obj, dict):
+                seed = seed_to_text(resource_obj.get("Seed"))
+        self._preview_identity.setText(f"Seed: {seed}\nResource: {resource or '—'}")
+        self._preview_fidelity.setText(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        if not resource:
+            self._preview_status.setText("Preview unavailable: companion resource filename missing.")
+            return
+        meshes, status = self._load_preview_meshes(resource)
+        if not meshes:
+            self._preview_status.setText(status)
+            return
+        self._ensure_preview_view()
+        if self._preview_view is None:
+            return
+        self._preview_view.set_modules(
+            {
+                "Width": 1,
+                "Height": 1,
+                "Slots": [{"Id": "^COMPANION_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
+            }
+        )
+        self._preview_view.set_mesh_data("COMPANION_PREVIEW", meshes)
+        self._preview_status.setText(status)
+        self._preview_view.update()

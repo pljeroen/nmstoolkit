@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPixmap
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -334,6 +335,37 @@ _STAT_NAME_MAP = {
     "Suit_Energy": "Energy",
     "Suit_Shield": "Shield",
 }
+_STAT_LABEL_MAX_CHARS = 14
+_STAT_ICON_SYMBOLS = {
+    "Damage": "DMG",
+    "Shield": "SHD",
+    "Hyperdrive": "WARP",
+    "Maneuverability": "MAN",
+    "Health": "HP",
+    "Energy": "ENG",
+    "Boost": "BST",
+    "Launch Cost": "LCH",
+}
+_STAT_ICON_COLORS = {
+    "Damage": ("#5a2d2d", "#b85a5a"),
+    "Shield": ("#2d3f5a", "#5a90c8"),
+    "Hyperdrive": ("#2d5a4f", "#57b8a0"),
+    "Maneuverability": ("#5a4f2d", "#c8ac5a"),
+    "Health": ("#4a2d5a", "#a05ac8"),
+    "Energy": ("#2d5a34", "#5ac87c"),
+    "Boost": ("#5a3d2d", "#c88a5a"),
+    "Launch Cost": ("#3f3f3f", "#b0b0b0"),
+}
+_STAT_ICON_HINT_IDS = {
+    "Ship_Weapons_Guns_Damage": ["UP_SHOT1", "UP_BOLT1", "UP_LASER1"],
+    "Ship_Armour_Shield_Strength": ["UP_SHLD1", "SHIPSHIELD"],
+    "Ship_Hyperdrive_JumpDistance": ["UP_HYP1", "HYPERDRIVE"],
+    "Ship_BoostManeuverability": ["UP_PULSE1", "SHIPJUMP1"],
+    "Ship_Boost": ["SHIPJUMP1", "UP_PULSE1"],
+    "Ship_Launcher_TakeOffCost": ["LAUNCHER", "UP_LAUN1"],
+    "Suit_Armour_Health": ["ENERGY", "UP_SHLD1"],
+}
+_STAT_ICON_CACHE = {}
 
 
 def _display_stat_name(stat_id: str) -> str:
@@ -343,6 +375,56 @@ def _display_stat_name(stat_id: str) -> str:
     if raw in _STAT_NAME_MAP:
         return _STAT_NAME_MAP[raw]
     return raw.replace("_", " ").title()
+
+
+def _truncate_label(text: str, max_chars: int) -> str:
+    if max_chars <= 3:
+        return "." * max(0, max_chars)
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+def _find_stat_icon_in_catalogue(stat_id: str) -> Optional[QPixmap]:
+    """Try to resolve a real game icon for a stat from known/detected technologies."""
+    if stat_id in _STAT_ICON_CACHE:
+        return _STAT_ICON_CACHE[stat_id]
+
+    candidate_ids = list(_STAT_ICON_HINT_IDS.get(stat_id, []))
+    sid = stat_id.upper()
+    if "TOX" in sid:
+        candidate_ids = ["UP_TOX1", "UP_TOX", "UP_HAZ"] + candidate_ids
+    elif "COLD" in sid:
+        candidate_ids = ["UP_COLD1", "UP_COLD", "UP_HAZ"] + candidate_ids
+    elif "HOT" in sid or "HEAT" in sid:
+        candidate_ids = ["UP_HOT1", "UP_HOT", "UP_HAZ"] + candidate_ids
+    elif "RAD" in sid:
+        candidate_ids = ["UP_RAD1", "UP_RAD", "UP_HAZ"] + candidate_ids
+    if _CATALOGUE is not None:
+        for tech in getattr(_CATALOGUE, "technologies", []):
+            bonuses = tech.get("stat_bonuses", []) or []
+            if any((b.get("stat") or "") == stat_id for b in bonuses):
+                tid = tech.get("id", "")
+                if tid and tid not in candidate_ids:
+                    candidate_ids.append(tid)
+
+    for item_id in candidate_ids:
+        pix = _get_item_pixmap(item_id, size=18)
+        if pix is not None:
+            _STAT_ICON_CACHE[stat_id] = pix
+            return pix
+
+    _STAT_ICON_CACHE[stat_id] = None
+    return None
+
+
+def _stat_icon_pixmap(stat_id: str, stat_name: str) -> QPixmap:
+    real = _find_stat_icon_in_catalogue(stat_id)
+    if real is not None:
+        return real
+    symbol = _STAT_ICON_SYMBOLS.get(stat_name, stat_name[:3].upper())
+    bg, border = _STAT_ICON_COLORS.get(stat_name, ("#3b3b40", "#7a7a88"))
+    return _create_placeholder_pixmap(symbol, bg, border, size=18)
 
 
 def _arrow_from_to(src_x: int, src_y: int, dst_x: int, dst_y: int) -> str:
@@ -680,7 +762,7 @@ class InventoryGrid(QWidget):
             "}"
         )
         effects_layout = QVBoxLayout(self._effects_group)
-        effects_layout.setContentsMargins(6, 4, 6, 6)
+        effects_layout.setContentsMargins(4, 4, 6, 6)
         effects_layout.setSpacing(4)
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
@@ -700,53 +782,69 @@ class InventoryGrid(QWidget):
         self._effects_apply_button.setStyleSheet(btn_style)
         self._effects_apply_button.setEnabled(False)
         top_row.addWidget(self._effects_apply_button, 0)
-        self._effects_score = QLabel("Score: —")
-        self._effects_score.setStyleSheet("color: #b8b8b8; font-size: 11px;")
-        self._effects_score.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        top_row.addWidget(self._effects_score, 0)
         top_row.addStretch(1)
         effects_layout.addLayout(top_row)
 
+        self._effects_score = QLabel("Score: —")
+        self._effects_score.setStyleSheet("color: #b8b8b8; font-size: 11px;")
+        self._effects_score.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        effects_layout.addWidget(self._effects_score)
+
         self._effects_stats = QTableWidget(0, 3)
         self._effects_stats.setHorizontalHeaderLabels(["Stat", "Value", "Gain"])
-        self._effects_stats.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._effects_stats.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self._effects_stats.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._effects_stats.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self._effects_stats.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._effects_stats.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self._effects_stats.horizontalHeader().setStretchLastSection(True)
         self._effects_stats.setEditTriggers(QTableWidget.NoEditTriggers)
         self._effects_stats.setSelectionMode(QTableWidget.NoSelection)
+        self._effects_stats.setFrameShape(QTableWidget.NoFrame)
+        self._effects_stats.setCornerButtonEnabled(False)
+        self._effects_stats.setViewportMargins(0, 0, 0, 0)
         self._effects_stats.verticalHeader().setVisible(False)
+        self._effects_stats.verticalHeader().setMinimumWidth(0)
+        self._effects_stats.verticalHeader().setMaximumWidth(0)
+        self._effects_stats.verticalHeader().setDefaultSectionSize(20)
         self._effects_stats.setAlternatingRowColors(True)
         self._effects_stats.setStyleSheet(
             "QTableWidget { background: #1f2127; color: #e3e3e3; gridline-color: #343844; }"
             "QHeaderView::section { background: #2a2d36; color: #f0d57a; padding: 3px; border: none; }"
+            "QTableCornerButton::section { background: #1f2127; border: none; }"
         )
         self._effects_stats.setMinimumHeight(140)
         self._effects_stats.setMaximumHeight(16777215)
         effects_layout.addWidget(self._effects_stats, 2)
 
-        self._effects_modules = QTableWidget(0, 4)
+        self._effects_modules = QTableWidget(0, 3)
         self._effects_modules.setHorizontalHeaderLabels(
-            ["Module", "Position", "Adjacency", "Impact"]
+            ["Module", "Adjacency", "Impact"]
         )
-        self._effects_modules.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._effects_modules.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self._effects_modules.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self._effects_modules.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._effects_modules.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self._effects_modules.horizontalHeader().setStretchLastSection(True)
         self._effects_modules.setEditTriggers(QTableWidget.NoEditTriggers)
         self._effects_modules.setSelectionMode(QTableWidget.NoSelection)
+        self._effects_modules.setFrameShape(QTableWidget.NoFrame)
+        self._effects_modules.setCornerButtonEnabled(False)
+        self._effects_modules.setViewportMargins(0, 0, 0, 0)
         self._effects_modules.verticalHeader().setVisible(False)
+        self._effects_modules.verticalHeader().setMinimumWidth(0)
+        self._effects_modules.verticalHeader().setMaximumWidth(0)
+        self._effects_modules.verticalHeader().setDefaultSectionSize(20)
         self._effects_modules.setAlternatingRowColors(True)
         self._effects_modules.setStyleSheet(
             "QTableWidget { background: #1f2127; color: #e3e3e3; gridline-color: #343844; }"
             "QHeaderView::section { background: #2a2d36; color: #f0d57a; padding: 3px; border: none; }"
+            "QTableCornerButton::section { background: #1f2127; border: none; }"
         )
         self._effects_modules.setMinimumHeight(200)
         self._effects_modules.setMaximumHeight(16777215)
         effects_layout.addWidget(self._effects_modules, 3)
 
         self._effects_group.setVisible(False)
-        self._effects_group.setMaximumWidth(340)
-        self._effects_group.setMinimumWidth(260)
+        self._effects_group.setMaximumWidth(265)
+        self._effects_group.setMinimumWidth(205)
         content_layout.addWidget(self._effects_group, 0)
 
         outer.addWidget(content)
@@ -885,10 +983,21 @@ class InventoryGrid(QWidget):
         )
         self._effects_stats.setRowCount(len(stat_rows))
         for r, row in enumerate(stat_rows):
-            self._effects_stats.setItem(r, 0, QTableWidgetItem(_display_stat_name(str(row["stat"]))))
-            stat_item = self._effects_stats.item(r, 0)
-            if stat_item is not None:
-                stat_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            stat_id = str(row["stat"])
+            full_stat = _display_stat_name(stat_id)
+            icon_holder = QWidget(self._effects_stats)
+            icon_layout = QHBoxLayout(icon_holder)
+            icon_layout.setContentsMargins(0, 0, 0, 0)
+            icon_layout.setSpacing(0)
+            icon_label = QLabel(icon_holder)
+            icon_label.setAlignment(Qt.AlignCenter)
+            icon_label.setPixmap(_stat_icon_pixmap(stat_id, full_stat))
+            icon_label.setToolTip(full_stat)
+            icon_holder.setToolTip(full_stat)
+            icon_layout.addStretch(1)
+            icon_layout.addWidget(icon_label, 0, Qt.AlignCenter)
+            icon_layout.addStretch(1)
+            self._effects_stats.setCellWidget(r, 0, icon_holder)
             if mode_key == "current":
                 val = float(row.get("current", 0.0))
                 gain = "-"
@@ -926,13 +1035,24 @@ class InventoryGrid(QWidget):
             icon_layout.addWidget(icon_label, 0, Qt.AlignCenter)
             icon_layout.addStretch(1)
             self._effects_modules.setCellWidget(r, 0, icon_holder)
-            self._effects_modules.setItem(r, 1, QTableWidgetItem(f"{m['pos'][0]},{m['pos'][1]}"))
-            self._effects_modules.setItem(r, 2, QTableWidgetItem(f"{m['adjacent_same']} linked"))
-            self._effects_modules.setItem(r, 3, QTableWidgetItem(f"+{m['contribution']}"))
-            for c in (1, 2, 3):
+            self._effects_modules.setItem(r, 1, QTableWidgetItem(f"{m['adjacent_same']} linked"))
+            self._effects_modules.setItem(r, 2, QTableWidgetItem(f"+{m['contribution']}"))
+            for c in (1, 2):
                 cell = self._effects_modules.item(r, c)
                 if cell is not None:
                     cell.setTextAlignment(Qt.AlignCenter)
+        self._sync_effects_column_widths()
+
+    def _sync_effects_column_widths(self):
+        """Use bottom-header labels as fixed width baseline for both tables."""
+        fm = QFontMetrics(self._effects_modules.horizontalHeader().font())
+        for col in (0, 1, 2):
+            header_item = self._effects_modules.horizontalHeaderItem(col)
+            header_text = header_item.text() if header_item is not None else ""
+            # Padding for header/cell breathing room.
+            width = fm.horizontalAdvance(header_text) + 24
+            self._effects_modules.setColumnWidth(col, width)
+            self._effects_stats.setColumnWidth(col, width)
 
     def _highlight_adjacency(self, x: int, y: int):
         self._clear_adjacency_highlight()

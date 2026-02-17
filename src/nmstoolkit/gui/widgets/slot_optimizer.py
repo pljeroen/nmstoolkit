@@ -17,29 +17,13 @@ from typing import Dict, List, Optional, Set, Tuple
 def _get_tech_category(item_id: str, catalogue) -> str:
     """Determine the technology category/group for adjacency purposes.
 
-    Uses catalogue lookup first, falls back to ID prefix grouping.
+    Uses ID family grouping first; only falls back to catalogue category when
+    no useful ID family exists.
     """
     if not item_id:
         return ""
 
-    # Try catalogue lookup
-    if catalogue is not None:
-        item = catalogue.find_item(item_id)
-        if item is not None:
-            cat = item.get("category", "")
-            if cat:
-                return cat
-
-        # Strip procedural suffix and retry
-        if "#" in item_id:
-            base = item_id.split("#")[0]
-            item = catalogue.find_item(base)
-            if item is not None:
-                cat = item.get("category", "")
-                if cat:
-                    return cat
-
-    # Fallback: group by ID prefix (strip ^ and procedural suffix)
+    # Group by ID prefix/family first (strip ^ and procedural suffix)
     uid = item_id.lstrip("^").split("#")[0]
 
     # Common prefix groupings for NMS upgrades
@@ -62,7 +46,32 @@ def _get_tech_category(item_id: str, catalogue) -> str:
     parts = uid.split("_")
     if len(parts) >= 2:
         return f"{parts[0]}_{parts[1]}"
+    if catalogue is not None:
+        item = catalogue.find_item(uid) or catalogue.find_item(item_id)
+        if item is not None:
+            cat = item.get("category", "")
+            if cat:
+                return cat
     return uid
+
+
+def _group_priority(group: str, group_slots: List[dict], mode: str) -> int:
+    if mode == "balanced":
+        return 1
+    marker = f"{group.upper()} " + " ".join(s.get("Id", "").upper() for s in group_slots)
+    dps_markers = (
+        "LASER", "BOLT", "SHOT", "RAIL", "CANN", "SMG", "GRENADE",
+        "PHOTON", "ROCKET", "PHASE", "SGUN", "DAMAGE",
+    )
+    endurance_markers = (
+        "SHIELD", "SHLD", "ENGY", "JET", "HAZ", "HOT", "COLD",
+        "TOX", "RAD", "UNW", "LIFE", "PROTECT",
+    )
+    if mode == "dps":
+        return 3 if any(m in marker for m in dps_markers) else 1
+    if mode == "endurance":
+        return 3 if any(m in marker for m in endurance_markers) else 1
+    return 1
 
 
 def _neighbors(x: int, y: int) -> List[Tuple[int, int]]:
@@ -95,7 +104,158 @@ def _score_placement(
     return score
 
 
-def optimize_tech_layout(inventory: dict, catalogue=None) -> None:
+def _normalize_item_id(item_id: str) -> str:
+    return item_id.lstrip("^").split("#")[0]
+
+
+def _find_catalogue_item(item_id: str, catalogue):
+    if catalogue is None:
+        return None
+    item = catalogue.find_item(item_id)
+    if item is not None:
+        return item
+    bare = item_id.lstrip("^")
+    item = catalogue.find_item(bare)
+    if item is not None:
+        return item
+    if "#" in bare:
+        return catalogue.find_item(bare.split("#")[0])
+    return None
+
+
+def _tech_slots(inventory: dict) -> List[dict]:
+    slots = inventory.get("Slots", [])
+    return [
+        s for s in slots
+        if s.get("Type", {}).get("InventoryType") == "Technology" and s.get("Id")
+    ]
+
+
+def _special_set(inventory: dict) -> Set[Tuple[int, int]]:
+    result: Set[Tuple[int, int]] = set()
+    for s in inventory.get("SpecialSlots", []):
+        if s.get("Type", {}).get("InventorySpecialSlotType") != "TechBonus":
+            continue
+        idx = s.get("Index", {})
+        if "X" in idx and "Y" in idx:
+            result.add((idx["X"], idx["Y"]))
+    return result
+
+
+def _layout_positions_by_group(inventory: dict, catalogue=None) -> Dict[str, List[Tuple[int, int]]]:
+    by_group: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    for slot in _tech_slots(inventory):
+        item_id = slot.get("Id", "")
+        group = _get_tech_category(item_id, catalogue)
+        idx = slot.get("Index", {})
+        by_group[group].append((idx.get("X", 0), idx.get("Y", 0)))
+    return by_group
+
+
+def _module_rows(inventory: dict, catalogue=None) -> List[dict]:
+    special = _special_set(inventory)
+    rows = []
+    for slot in _tech_slots(inventory):
+        item_id = slot.get("Id", "")
+        idx = slot.get("Index", {})
+        x, y = idx.get("X", 0), idx.get("Y", 0)
+        pos = (x, y)
+        group = _get_tech_category(item_id, catalogue)
+
+        adjacent_same = 0
+        for nx, ny in _neighbors(x, y):
+            nslot = next(
+                (
+                    s for s in _tech_slots(inventory)
+                    if s.get("Index", {}).get("X") == nx and s.get("Index", {}).get("Y") == ny
+                ),
+                None,
+            )
+            if not nslot:
+                continue
+            n_group = _get_tech_category(nslot.get("Id", ""), catalogue)
+            if n_group == group:
+                adjacent_same += 1
+
+        contribution = adjacent_same + (3 if pos in special else 0)
+        rows.append({
+            "id": item_id,
+            "pos": pos,
+            "group": group,
+            "special": pos in special,
+            "adjacent_same": adjacent_same,
+            "contribution": contribution,
+        })
+    return rows
+
+
+def _stat_totals(inventory: dict, catalogue=None) -> Dict[str, dict]:
+    rows = _module_rows(inventory, catalogue)
+    by_pos = {r["pos"]: r for r in rows}
+    totals: Dict[str, dict] = {}
+
+    for slot in _tech_slots(inventory):
+        item_id = slot.get("Id", "")
+        item = _find_catalogue_item(item_id, catalogue)
+        if item is None:
+            continue
+        bonuses = item.get("stat_bonuses", []) or []
+        idx = slot.get("Index", {})
+        pos = (idx.get("X", 0), idx.get("Y", 0))
+        row = by_pos.get(pos, {"adjacent_same": 0, "special": False})
+        # Heuristic multiplier for display: adjacency + special slot impact.
+        mult = 1.0 + (0.1 * row["adjacent_same"]) + (0.25 if row["special"] else 0.0)
+        for b in bonuses:
+            stat = b.get("stat", "")
+            base = float(b.get("bonus", 0.0) or 0.0)
+            if not stat:
+                continue
+            agg = totals.setdefault(stat, {"base": 0.0, "effective": 0.0, "confidence": "Estimated"})
+            agg["base"] += base
+            agg["effective"] += base * mult
+    return totals
+
+
+def analyze_tech_layout(inventory: dict, catalogue=None, mode: str = "balanced") -> dict:
+    """Analyze current and optimized technology layout without mutating input."""
+    current_inv = copy.deepcopy(inventory)
+    optimized_inv = copy.deepcopy(inventory)
+    optimize_tech_layout(optimized_inv, catalogue, mode=mode)
+
+    current_groups = _layout_positions_by_group(current_inv, catalogue)
+    optimized_groups = _layout_positions_by_group(optimized_inv, catalogue)
+    current_special = _special_set(current_inv)
+    optimized_special = _special_set(optimized_inv)
+
+    current_score = _score_placement(current_groups, current_special)
+    optimized_score = _score_placement(optimized_groups, optimized_special)
+
+    current_stats = _stat_totals(current_inv, catalogue)
+    optimized_stats = _stat_totals(optimized_inv, catalogue)
+    all_stats = sorted(set(current_stats) | set(optimized_stats))
+    stat_rows = []
+    for stat in all_stats:
+        c = current_stats.get(stat, {"effective": 0.0, "confidence": "Estimated"})
+        o = optimized_stats.get(stat, {"effective": 0.0, "confidence": "Estimated"})
+        stat_rows.append({
+            "stat": stat,
+            "current": c.get("effective", 0.0),
+            "optimized": o.get("effective", 0.0),
+            "delta": o.get("effective", 0.0) - c.get("effective", 0.0),
+            "confidence": c.get("confidence", "Estimated"),
+        })
+
+    return {
+        "current_score": current_score,
+        "optimized_score": optimized_score,
+        "delta_score": optimized_score - current_score,
+        "module_rows": _module_rows(current_inv, catalogue),
+        "stat_rows": stat_rows,
+        "optimized_inventory": optimized_inv,
+    }
+
+
+def optimize_tech_layout(inventory: dict, catalogue=None, mode: str = "balanced") -> None:
     """Rearrange technology items in inventory for maximum adjacency bonuses.
 
     Modifies the inventory dict in-place. Non-tech items are not moved.
@@ -136,7 +296,11 @@ def optimize_tech_layout(inventory: dict, catalogue=None) -> None:
 
     # Greedy placement: place largest groups first, starting from supercharged slots
     # Sort groups by size (largest first)
-    sorted_groups = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+    sorted_groups = sorted(
+        groups.items(),
+        key=lambda kv: (_group_priority(kv[0], kv[1], mode), len(kv[1])),
+        reverse=True,
+    )
 
     placed: Dict[str, List[Tuple[int, int]]] = {}
     used: Set[Tuple[int, int]] = set()

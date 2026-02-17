@@ -284,7 +284,6 @@ class MainWindow(QMainWindow):
 
         tools_menu = menu.addMenu("&Tools")
         tools_menu.addAction("Extract Game &Icons...", self._on_extract_icons)
-        tools_menu.addAction("Extract Corvette &Models...", self._on_extract_corvette_models)
         tools_menu.addAction("External &Dependencies...", self._on_external_deps)
 
     # ------------------------------------------------------------------

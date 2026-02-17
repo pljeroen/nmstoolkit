@@ -1,6 +1,13 @@
 """Ships editor tab — ownership list, inventories, seed/type/class."""
 
+from pathlib import Path
+import math
+import shutil
+from typing import List, Optional, Tuple
+
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -19,6 +26,8 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
+from nmstoolkit.paths import external_tools_dir
+from nmstoolkit.core.mesh_data import Mesh, Transform
 
 _INV_CLASSES = ["C", "B", "A", "S"]
 
@@ -65,12 +74,141 @@ def _detect_ship_type(resource: dict) -> str:
     return "Unknown"
 
 
+def _normalize_ref(path: str) -> str:
+    return path.replace("\\", "/").lower()
+
+
+def _seed_to_text(seed_value) -> str:
+    if isinstance(seed_value, list) and len(seed_value) >= 2:
+        return str(seed_value[1])
+    if isinstance(seed_value, str) and seed_value:
+        return seed_value
+    return "—"
+
+
+def _resolve_pak_dir(game_dir: Path) -> Optional[Path]:
+    pcbanks = game_dir / "GAMEDATA" / "PCBANKS"
+    if pcbanks.exists():
+        return pcbanks
+    pcbanks = game_dir / "PCBANKS"
+    if pcbanks.exists():
+        return pcbanks
+    if game_dir.name.upper() == "PCBANKS" and game_dir.exists():
+        return game_dir
+    return None
+
+
+def _find_mbin_compiler(pak_dir: Path) -> Optional[Path]:
+    ext_dir = external_tools_dir() / "MBINCompiler"
+    candidates = [
+        ext_dir / "MBINCompiler.exe",
+        ext_dir / "MBINCompiler",
+        ext_dir / "MBINCompiler-linux",
+        Path("/tmp/nms_exml/MBINCompiler"),
+        pak_dir / "MBINCompiler.exe",
+        pak_dir / "MBINCompiler",
+        pak_dir.parent / "MBINCompiler.exe",
+        pak_dir.parent / "MBINCompiler",
+        pak_dir.parent.parent / "MBINCompiler.exe",
+        pak_dir.parent.parent / "MBINCompiler",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    found = shutil.which("MBINCompiler") or shutil.which("MBINCompiler.exe")
+    return Path(found) if found else None
+
+
+def _rotate_xyz(v: tuple[float, float, float], rot_deg: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = v
+    rx, ry, rz = (math.radians(rot_deg[0]), math.radians(rot_deg[1]), math.radians(rot_deg[2]))
+    cy, sy = math.cos(rx), math.sin(rx)
+    y, z = y * cy - z * sy, y * sy + z * cy
+    cx, sx = math.cos(ry), math.sin(ry)
+    x, z = x * cx + z * sx, -x * sx + z * cx
+    cz, sz = math.cos(rz), math.sin(rz)
+    x, y = x * cz - y * sz, x * sz + y * cz
+    return (x, y, z)
+
+
+def _normalize_vec3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = v
+    m = math.sqrt(x * x + y * y + z * z)
+    if m <= 1e-9:
+        return (0.0, 0.0, 1.0)
+    return (x / m, y / m, z / m)
+
+
+def _combine_transform(parent: Transform, local: Transform) -> Transform:
+    psx, psy, psz = parent.scale
+    lpx, lpy, lpz = local.position
+    sp = (lpx * psx, lpy * psy, lpz * psz)
+    rp = _rotate_xyz(sp, parent.rotation)
+    return Transform(
+        position=(parent.position[0] + rp[0], parent.position[1] + rp[1], parent.position[2] + rp[2]),
+        rotation=(
+            parent.rotation[0] + local.rotation[0],
+            parent.rotation[1] + local.rotation[1],
+            parent.rotation[2] + local.rotation[2],
+        ),
+        scale=(psx * local.scale[0], psy * local.scale[1], psz * local.scale[2]),
+    )
+
+
+def _scene_geometry_instances(scene_root) -> list[tuple[str, Transform]]:
+    out: list[tuple[str, Transform]] = []
+
+    def walk(node, world: Transform):
+        composed = _combine_transform(world, node.transform)
+        # Skip collision geometry for visual preview.
+        if node.geometry_ref and str(node.node_type).upper() != "COLLISION":
+            out.append((node.geometry_ref, composed))
+        for child in node.children:
+            walk(child, composed)
+
+    walk(scene_root, Transform.identity())
+    return out
+
+
+def _apply_transform_to_mesh(mesh: Mesh, transform: Transform) -> Mesh:
+    px, py, pz = transform.position
+    sx, sy, sz = transform.scale
+    rot = transform.rotation
+
+    vertices = []
+    for vx, vy, vz in mesh.vertices:
+        x, y, z = vx * sx, vy * sy, vz * sz
+        x, y, z = _rotate_xyz((x, y, z), rot)
+        vertices.append((x + px, y + py, z + pz))
+
+    normals = []
+    for nx, ny, nz in mesh.normals:
+        x, y, z = _rotate_xyz((nx, ny, nz), rot)
+        normals.append(_normalize_vec3((x, y, z)))
+
+    return Mesh(
+        vertices=tuple(vertices),
+        normals=tuple(normals),
+        uvs=mesh.uvs,
+        indices=mesh.indices,
+    )
+
+
+def _mesh_is_valid(mesh: Mesh) -> bool:
+    if mesh.vertex_count == 0 or mesh.index_count == 0:
+        return False
+    if max(mesh.indices, default=-1) >= mesh.vertex_count:
+        return False
+    return True
+
+
 class ShipsTab(QWidget):
     def __init__(self):
         super().__init__()
         self._data = None
         self._ships = []
         self._current_index = -1
+        self._preview_view = None
         self._build_ui()
 
     def _build_ui(self):
@@ -160,9 +298,27 @@ class ShipsTab(QWidget):
         self._inv_general = InventoryGrid("General")
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
+        self._preview_tab = QWidget()
+        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_identity = QLabel("Seed: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_fidelity = QLabel(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        self._preview_fidelity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a ship")
+        self._preview_status.setWordWrap(True)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_fidelity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_placeholder, 1)
         self._inv_tabs.addTab(self._inv_general, "General")
         self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
+        self._inv_tabs.addTab(self._preview_tab, "Preview")
         self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
         layout.addWidget(self._inv_tabs)
 
@@ -239,6 +395,7 @@ class ShipsTab(QWidget):
         cargo_inv = ship.get("Inventory_Cargo", {})
         self._inv_cargo.set_inventory(cargo_inv)
         self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
+        self._update_preview(ship)
 
     def _on_name_changed(self):
         ship = self._current_ship()
@@ -344,3 +501,170 @@ class ShipsTab(QWidget):
             return
         vault.delete_from_vault(self._vault_entries[row])
         self._refresh_vault()
+
+    def _ensure_preview_view(self):
+        if self._preview_view is not None:
+            return
+        try:
+            from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        except Exception:
+            self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
+            return
+        self._preview_view = Corvette3DView(self._preview_tab)
+        if hasattr(self._preview_view, "set_grid_visible"):
+            self._preview_view.set_grid_visible(False)
+        if hasattr(self._preview_view, "set_layering_enabled"):
+            self._preview_view.set_layering_enabled(False)
+        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_placeholder.hide()
+        self._preview_view.show()
+
+    def _update_preview(self, ship: dict) -> None:
+        resource_obj = ship.get("Resource", {})
+        if not isinstance(resource_obj, dict):
+            resource_obj = {}
+        seed = _seed_to_text(ship.get("Seed"))
+        if seed == "—":
+            seed = _seed_to_text(resource_obj.get("Seed"))
+        if seed == "—":
+            inv_layout = ship.get("InventoryLayout", {})
+            if isinstance(inv_layout, dict):
+                seed = _seed_to_text(inv_layout.get("Seed"))
+        resource = resource_obj.get("Filename", "")
+        self._preview_identity.setText(f"Seed: {seed}\nResource: {resource or '—'}")
+        self._preview_fidelity.setText(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        if not resource:
+            self._preview_status.setText("Preview unavailable: ship resource filename missing.")
+            return
+
+        meshes, status = self._load_preview_meshes(resource)
+        if not meshes:
+            self._preview_status.setText(status)
+            return
+
+        self._ensure_preview_view()
+        if self._preview_view is None:
+            return
+        self._preview_view.set_modules(
+            {
+                "Width": 1,
+                "Height": 1,
+                "Slots": [
+                    {"Id": "^SHIP_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}
+                ],
+            }
+        )
+        self._preview_view.set_mesh_data("SHIP_PREVIEW", meshes)
+        self._preview_status.setText(status)
+        self._preview_view.update()
+
+    def _load_preview_meshes(self, resource_filename: str) -> Tuple[List[object], str]:
+        try:
+            from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
+            from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
+            from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
+            from nmstoolkit.core.geometry_parser import parse_geometry
+            from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
+            from nmstoolkit.core.scene_parser import parse_scene
+        except Exception as exc:
+            return [], f"Preview unavailable: dependency import failed ({exc})."
+
+        settings = QSettings("NMSToolkit", "NMSToolkit")
+        game_dir_value = settings.value("game_dir", "")
+        if not game_dir_value:
+            return [], "Preview unavailable: set game directory first."
+        pak_dir = _resolve_pak_dir(Path(str(game_dir_value)))
+        if pak_dir is None:
+            return [], "Preview unavailable: PCBANKS not found in configured game directory."
+        mbin_compiler = _find_mbin_compiler(pak_dir)
+        if mbin_compiler is None:
+            return [], "Preview unavailable: MBINCompiler not found."
+
+        scene_path = _normalize_ref(resource_filename)
+        scene_pak = pak_dir / "NMSARC.EntitySceneMBIN.pak"
+        if not scene_pak.exists():
+            return [], "Preview unavailable: NMSARC.EntitySceneMBIN.pak missing."
+
+        converter = MbinCompilerAdapter(mbin_compiler)
+        with HgpakAdapter.from_path(scene_pak) as pak:
+            scene_files = {_normalize_ref(f): f for f in pak.list_files()}
+            found_scene = scene_files.get(scene_path)
+            if not found_scene:
+                return [], "Preview unavailable: scene not found in gamefiles."
+            scene_bytes = pak.extract(paths=[found_scene])[found_scene]
+
+        scene_exml = converter.convert(scene_bytes)
+        scene_root = parse_scene(scene_exml)
+        instances = [( _normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
+        if not instances:
+            return [], "Preview unavailable: scene contains no geometry references."
+
+        geo_map = {}
+        missing = {r for r, _t in instances}
+        for mesh_pak in sorted(pak_dir.glob("NMSARC.Mesh*.pak")):
+            if not missing:
+                break
+            with HgpakAdapter.from_path(mesh_pak) as pak:
+                files = {_normalize_ref(f): f for f in pak.list_files()}
+                to_extract = []
+                for ref in list(missing):
+                    if ref + ".pc" in files:
+                        to_extract.append(files[ref + ".pc"])
+                        data_ref = ref.replace(".geometry.mbin", ".geometry.data.mbin")
+                        if data_ref + ".pc" in files:
+                            to_extract.append(files[data_ref + ".pc"])
+                        missing.discard(ref)
+                if not to_extract:
+                    continue
+                extracted = pak.extract(paths=to_extract)
+                for p, b in extracted.items():
+                    n = _normalize_ref(p)
+                    geo_map[n] = b
+                    if n.endswith(".pc"):
+                        geo_map[n[:-3]] = b
+
+        decoded_by_ref = {}
+        meshes: List[Mesh] = []
+        for ref, world in instances:
+            base_meshes = decoded_by_ref.get(ref)
+            if base_meshes is None:
+                base_meshes = []
+                decoded_by_ref[ref] = base_meshes
+                geo_bytes = geo_map.get(ref) or geo_map.get(ref + ".pc")
+                if geo_bytes is None:
+                    continue
+                geo_exml = ""
+                try:
+                    geo_exml = converter.convert(geo_bytes)
+                except Exception:
+                    pass
+                data_ref = ref.replace(".geometry.mbin", ".geometry.data.mbin")
+                data_bytes = geo_map.get(data_ref) or geo_map.get(data_ref + ".pc")
+                if geo_exml and data_bytes is not None:
+                    try:
+                        stream_exml = converter.convert(data_bytes)
+                        stream_meshes = parse_geometry_stream_exml(geo_exml, stream_exml)
+                        if stream_meshes:
+                            base_meshes = [m for m in stream_meshes if _mesh_is_valid(m)]
+                            decoded_by_ref[ref] = base_meshes
+                    except Exception:
+                        pass
+                if not base_meshes:
+                    binary_meshes = parse_geometry(geo_bytes)
+                    if binary_meshes:
+                        base_meshes = [m for m in binary_meshes if _mesh_is_valid(m)]
+                        decoded_by_ref[ref] = base_meshes
+                if not base_meshes and geo_exml:
+                    fallback = parse_geometry_aabb_fallback(geo_exml)
+                    base_meshes = [m for m in fallback if _mesh_is_valid(m)]
+                    decoded_by_ref[ref] = base_meshes
+            if not base_meshes:
+                continue
+            meshes.extend(_apply_transform_to_mesh(m, world) for m in base_meshes)
+
+        QApplication.processEvents()
+        if not meshes:
+            return [], "Preview unavailable: no renderable mesh data found."
+        return meshes, f"Preview loaded ({len(meshes)} meshes, geometry-only template-level)."

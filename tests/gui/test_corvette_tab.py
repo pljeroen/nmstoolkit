@@ -3,7 +3,14 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from nmstoolkit.gui.tabs.corvette_tab import CorvetteTab, _categorize_modules
+from nmstoolkit.gui.tabs.corvette_tab import (
+    CorvetteTab,
+    _categorize_modules,
+    _derive_module_id,
+    _required_corvette_modules,
+    _resolve_pak_dir,
+    _scene_candidates_for_module,
+)
 
 
 @pytest.fixture(scope="module")
@@ -290,3 +297,43 @@ class TestCorvetteModelGuidance:
         tab = CorvetteTab()
         assert tab._3d_view is None
         assert tab._3d_placeholder is not None
+
+
+class TestCorvetteGamefileHelpers:
+    def test_required_corvette_modules_extracts_unique_ids(self):
+        inv = {
+            "Slots": [
+                {"Id": "^B_COK_A"},
+                {"Id": "^B_WNG_A"},
+                {"Id": "^B_WNG_A"},
+                {"Id": "^YOURSHIP_LAUNCH"},
+            ]
+        }
+        assert _required_corvette_modules(inv) == {"B_COK_A", "B_WNG_A"}
+
+    def test_derive_module_id_from_scene_path_parts(self):
+        parts = "models/common/spacecraft/corvette/parts/cok_a/entities/cok_a.scene.mbin".split("/")
+        assert _derive_module_id(parts) == "B_COK_A"
+
+    def test_resolve_pak_dir_from_root_with_gamedata(self, tmp_path):
+        game_dir = tmp_path / "No Man's Sky"
+        pcbanks = game_dir / "GAMEDATA" / "PCBANKS"
+        pcbanks.mkdir(parents=True)
+        assert _resolve_pak_dir(game_dir) == pcbanks
+
+    def test_resolve_pak_dir_from_pcbanks_dir(self, tmp_path):
+        pcbanks = tmp_path / "PCBANKS"
+        pcbanks.mkdir(parents=True)
+        assert _resolve_pak_dir(pcbanks) == pcbanks
+
+    def test_scene_candidates_prefer_parts_cockpit(self):
+        candidates = _scene_candidates_for_module("B_COK_A")
+        assert candidates
+        assert candidates[0] == "models/common/spacecraft/biggs/modules/parts/cockpit_1x2_a.scene.mbin"
+        assert "models/common/spacecraft/biggs/modules/cockpit_a_1x2_placement.scene.mbin" in candidates
+
+    def test_scene_candidates_prefer_parts_wing(self):
+        candidates = _scene_candidates_for_module("B_WNG_A")
+        assert candidates
+        assert candidates[0] == "models/common/spacecraft/biggs/modules/parts/wing_a_l.scene.mbin"
+        assert "models/common/spacecraft/biggs/modules/ext_wing_a_1x2_placement.scene.mbin" in candidates

@@ -1,5 +1,7 @@
 """Squadron editor tab."""
 
+from typing import Optional
+
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -7,11 +9,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
+from nmstoolkit.gui.preview_support import load_template_preview_meshes
 
 _RANK_NAMES = {0: "Cadet", 1: "Ensign", 2: "Lieutenant", 3: "Commander", 4: "Captain"}
 
@@ -49,6 +53,7 @@ class SquadronTab(QWidget):
         self._data = None
         self._pilots = []
         self._current_index = -1
+        self._preview_view: Optional[QWidget] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -62,8 +67,9 @@ class SquadronTab(QWidget):
         left_layout.addWidget(self._list)
         layout.addWidget(left)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
+        self._tabs = QTabWidget()
+        general_tab = QWidget()
+        right_layout = QVBoxLayout(general_tab)
         details = QGroupBox("Pilot Details")
         det_layout = QFormLayout(details)
 
@@ -96,7 +102,27 @@ class SquadronTab(QWidget):
         right_layout.addWidget(self._slots_label)
 
         right_layout.addStretch()
-        layout.addWidget(right)
+        self._tabs.addTab(general_tab, "General")
+
+        self._preview_tab = QWidget()
+        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_identity = QLabel("Seed: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_fidelity = QLabel(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        self._preview_fidelity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a pilot")
+        self._preview_status.setWordWrap(True)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_fidelity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_placeholder, 1)
+        self._tabs.addTab(self._preview_tab, "Preview")
+        layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -163,6 +189,7 @@ class SquadronTab(QWidget):
         self._ship_combo.blockSignals(False)
         self._npc_seed.set_seed(npc.get("Seed", ""))
         self._ship_seed.set_seed(ship.get("Seed", ""))
+        self._update_preview(ship)
 
     def _on_ship_selected(self, combo_index):
         """Update pilot's ShipResource when a ship is selected from dropdown."""
@@ -178,6 +205,7 @@ class SquadronTab(QWidget):
             "Filename": resource.get("Filename", ""),
             "Seed": player_ship.get("Seed", ""),
         }
+        self._update_preview(pilot["ShipResource"])
 
     def _on_rank_changed(self, index):
         pilot = self._current_pilot()
@@ -203,3 +231,52 @@ class SquadronTab(QWidget):
             ship = pilot.get("ShipResource", {})
             if isinstance(ship, dict):
                 ship["Seed"] = seed
+                self._update_preview(ship)
+
+    def _ensure_preview_view(self) -> None:
+        if self._preview_view is not None:
+            return
+        try:
+            from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        except Exception:
+            self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
+            return
+        self._preview_view = Corvette3DView(self._preview_tab)
+        if hasattr(self._preview_view, "set_grid_visible"):
+            self._preview_view.set_grid_visible(False)
+        if hasattr(self._preview_view, "set_layering_enabled"):
+            self._preview_view.set_layering_enabled(False)
+        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_placeholder.hide()
+        self._preview_view.show()
+
+    def _load_preview_meshes(self, resource_filename: str):
+        return load_template_preview_meshes(resource_filename)
+
+    def _update_preview(self, ship_resource: dict) -> None:
+        resource = ship_resource.get("Filename", "") if isinstance(ship_resource, dict) else ""
+        seed = ship_resource.get("Seed", "—") if isinstance(ship_resource, dict) else "—"
+        self._preview_identity.setText(f"Seed: {seed or '—'}\nResource: {resource or '—'}")
+        self._preview_fidelity.setText(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        if not resource:
+            self._preview_status.setText("Preview unavailable: squadron ship resource filename missing.")
+            return
+        meshes, status = self._load_preview_meshes(resource)
+        if not meshes:
+            self._preview_status.setText(status)
+            return
+        self._ensure_preview_view()
+        if self._preview_view is None:
+            return
+        self._preview_view.set_modules(
+            {
+                "Width": 1,
+                "Height": 1,
+                "Slots": [{"Id": "^SQUADRON_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
+            }
+        )
+        self._preview_view.set_mesh_data("SQUADRON_PREVIEW", meshes)
+        self._preview_status.setText(status)
+        self._preview_view.update()

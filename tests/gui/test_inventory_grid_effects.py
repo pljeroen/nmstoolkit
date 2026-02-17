@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 from nmstoolkit.gui.widgets.inventory_grid import (
     InventoryGrid,
+    _STAT_LABEL_MAX_CHARS,
     _arrow_from_to,
     set_catalogue,
 )
@@ -71,7 +72,7 @@ def test_effects_panel_visible_with_tech_and_stats(qapp):
     assert grid._effects_stats.rowCount() >= 1
     assert grid._effects_modules.rowCount() == 2
     assert grid._effects_stats.columnCount() == 3
-    assert grid._effects_stats.item(0, 0).text() == "Damage"
+    assert grid._effects_stats.cellWidget(0, 0) is not None
 
 
 def test_adjacency_highlight_marks_same_group_neighbors(qapp):
@@ -162,3 +163,19 @@ def test_arrow_direction_points_to_boost_recipient():
     assert _arrow_from_to(1, 0, 0, 0) == "←"
     assert _arrow_from_to(0, 0, 0, 1) == "↓"
     assert _arrow_from_to(0, 1, 0, 0) == "↑"
+
+
+def test_long_stat_name_is_truncated_with_tooltip(qapp):
+    cat = _FakeCatalogue({
+        "UP_TEST1": {
+            "category": "UP_TEST",
+            "stat_bonuses": [{"stat": "Ship_This_Is_A_Very_Long_Stat_Name", "bonus": 1.0}],
+        },
+    })
+    set_catalogue(cat)
+    grid = InventoryGrid("Tech")
+    grid.set_inventory(_inv([_slot("^UP_TEST1", 0, 0)]))
+
+    stat_widget = grid._effects_stats.cellWidget(0, 0)
+    assert stat_widget is not None
+    assert stat_widget.toolTip() == "Ship This Is A Very Long Stat Name"

@@ -1,5 +1,7 @@
 """Multitools editor tab."""
 
+from typing import Optional
+
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -17,6 +19,11 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
+from nmstoolkit.gui.preview_support import (
+    find_scene_resource_filename,
+    load_template_preview_meshes,
+    seed_to_text,
+)
 
 _INV_CLASSES = ["C", "B", "A", "S"]
 
@@ -28,6 +35,7 @@ class MultitoolsTab(QWidget):
         self._multitools = []
         self._active_index = 0
         self._current_index = -1
+        self._preview_view: Optional[QWidget] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -92,10 +100,28 @@ class MultitoolsTab(QWidget):
         layout.addWidget(left)
 
         # Right: single inventory grid (multitools use "Store" = combined inventory)
-        right = QTabWidget()
+        self._tabs = QTabWidget()
         self._inv_store = InventoryGrid("Inventory")
-        right.addTab(self._inv_store, "Inventory")
-        layout.addWidget(right)
+        self._tabs.addTab(self._inv_store, "Inventory")
+        self._preview_tab = QWidget()
+        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_identity = QLabel("Seed: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_fidelity = QLabel(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        self._preview_fidelity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a multitool")
+        self._preview_status.setWordWrap(True)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_fidelity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_placeholder, 1)
+        self._tabs.addTab(self._preview_tab, "Preview")
+        layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -149,6 +175,7 @@ class MultitoolsTab(QWidget):
 
         self._active_label.setText("Yes" if index == self._active_index else "No")
         self._inv_store.set_inventory(store if isinstance(store, dict) else {})
+        self._update_preview(mt)
 
     def _on_move_up(self):
         idx = self._current_index
@@ -241,3 +268,55 @@ class MultitoolsTab(QWidget):
             return
         vault.delete_from_vault(self._vault_entries[row])
         self._refresh_vault()
+
+    def _ensure_preview_view(self) -> None:
+        if self._preview_view is not None:
+            return
+        try:
+            from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        except Exception:
+            self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
+            return
+        self._preview_view = Corvette3DView(self._preview_tab)
+        if hasattr(self._preview_view, "set_grid_visible"):
+            self._preview_view.set_grid_visible(False)
+        if hasattr(self._preview_view, "set_layering_enabled"):
+            self._preview_view.set_layering_enabled(False)
+        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_placeholder.hide()
+        self._preview_view.show()
+
+    def _load_preview_meshes(self, resource_filename: str):
+        return load_template_preview_meshes(resource_filename)
+
+    def _update_preview(self, multitool: dict) -> None:
+        resource = find_scene_resource_filename(multitool)
+        seed = seed_to_text(multitool.get("Seed"))
+        if seed == "—":
+            resource_obj = multitool.get("Resource", {})
+            if isinstance(resource_obj, dict):
+                seed = seed_to_text(resource_obj.get("Seed"))
+        self._preview_identity.setText(f"Seed: {seed}\nResource: {resource or '—'}")
+        self._preview_fidelity.setText(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        if not resource:
+            self._preview_status.setText("Preview unavailable: multitool resource filename missing.")
+            return
+        meshes, status = self._load_preview_meshes(resource)
+        if not meshes:
+            self._preview_status.setText(status)
+            return
+        self._ensure_preview_view()
+        if self._preview_view is None:
+            return
+        self._preview_view.set_modules(
+            {
+                "Width": 1,
+                "Height": 1,
+                "Slots": [{"Id": "^MULTITOOL_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
+            }
+        )
+        self._preview_view.set_mesh_data("MULTITOOL_PREVIEW", meshes)
+        self._preview_status.setText(status)
+        self._preview_view.update()
