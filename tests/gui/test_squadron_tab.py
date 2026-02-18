@@ -21,13 +21,24 @@ def _make_pilot(race_filename="NPCGEK", rank=2, ship_filename="FIGHTER_PROC.SCEN
     }
 
 
-def _make_player_ship(name="My Ship", filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN"):
+def _make_player_ship(
+    name="My Ship",
+    filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
+    inv_class="A",
+    damage=120.0,
+):
     return {
         "Name": name,
         "Resource": {"Filename": filename},
         "Seed": "0x1234",
-        "Inventory": {"Slots": [], "ValidSlotIndices": [], "Class": {"InventoryClass": "A"},
-                      "Width": 10, "Height": 5},
+        "Inventory": {
+            "Slots": [],
+            "ValidSlotIndices": [],
+            "Class": {"InventoryClass": inv_class},
+            "Width": 10,
+            "Height": 5,
+            "BaseStatValues": [{"BaseStatID": "^SHIP_DAMAGE", "Value": damage}],
+        },
         "Inventory_TechOnly": {"Slots": [], "ValidSlotIndices": [], "Width": 10, "Height": 6},
         "Inventory_Cargo": {"Slots": [], "ValidSlotIndices": [], "Width": 8, "Height": 5},
     }
@@ -99,3 +110,45 @@ class TestSquadronTabBasics:
         tab = SquadronTab()
         tab.set_data({"SquadronPilots": [], "SquadronUnlockedPilotSlots": []})
         assert tab._list.count() == 0
+
+    def test_general_tab_has_compact_details_and_specs_panel(self):
+        from PySide6.QtWidgets import QSizePolicy
+        from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
+
+        tab = SquadronTab()
+        assert hasattr(tab, "_details_group")
+        assert hasattr(tab, "_specs_group")
+        assert tab._details_group.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+
+    def test_pilot_select_matches_ship_combo_with_normalized_filename(self):
+        from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
+
+        pilot = _make_pilot(ship_filename="models/common/spacecraft/scientific/scientific_proc.scene.mbin")
+        psd = {
+            "SquadronPilots": [pilot],
+            "SquadronUnlockedPilotSlots": [0],
+            "ShipOwnership": [
+                _make_player_ship("Alpha Fighter", "MODELS\\COMMON\\SPACECRAFT\\FIGHTERS\\FIGHTER_PROC.SCENE.MBIN"),
+                _make_player_ship("Beta Explorer", "MODELS\\COMMON\\SPACECRAFT\\SCIENTIFIC\\SCIENTIFIC_PROC.SCENE.MBIN"),
+            ],
+        }
+        tab = SquadronTab()
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert tab._ship_combo.currentIndex() == 1
+
+    def test_ship_specs_panel_shows_class_and_dps(self):
+        from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
+
+        psd = {
+            "SquadronPilots": [_make_pilot(ship_filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN")],
+            "SquadronUnlockedPilotSlots": [0],
+            "ShipOwnership": [
+                _make_player_ship("Alpha Fighter", "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN", inv_class="S", damage=250.0),
+            ],
+        }
+        tab = SquadronTab()
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert "S" in tab._ship_specs_class.text()
+        assert "250" in tab._ship_specs_dps.text()

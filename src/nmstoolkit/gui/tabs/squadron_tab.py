@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -49,6 +50,36 @@ def _extract_ship_type(ship_resource: dict) -> str:
     return name
 
 
+def _normalize_resource_path(path: str) -> str:
+    return str(path or "").replace("\\", "/").lower()
+
+
+def _extract_ship_class(ship: dict) -> str:
+    inventory = ship.get("Inventory", {}) if isinstance(ship, dict) else {}
+    class_obj = inventory.get("Class", {}) if isinstance(inventory, dict) else {}
+    if isinstance(class_obj, dict):
+        value = class_obj.get("InventoryClass", "")
+        if value:
+            return str(value)
+    return "—"
+
+
+def _extract_ship_damage(ship: dict) -> float:
+    inventory = ship.get("Inventory", {}) if isinstance(ship, dict) else {}
+    base_stats = inventory.get("BaseStatValues", []) if isinstance(inventory, dict) else []
+    if not isinstance(base_stats, list):
+        return 0.0
+    for stat in base_stats:
+        if not isinstance(stat, dict):
+            continue
+        if str(stat.get("BaseStatID", "")).upper() == "^SHIP_DAMAGE":
+            try:
+                return float(stat.get("Value", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
 class SquadronTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -76,9 +107,14 @@ class SquadronTab(QWidget):
         self._general_splitter.setChildrenCollapsible(False)
         general_layout.addWidget(self._general_splitter)
         general_top = QWidget()
-        right_layout = QVBoxLayout(general_top)
-        details = QGroupBox("Pilot Details")
-        det_layout = QFormLayout(details)
+        top_layout = QHBoxLayout(general_top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(10)
+        self._details_group = QGroupBox("Pilot Details")
+        self._details_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._details_group.setMaximumWidth(360)
+        det_layout = QFormLayout(self._details_group)
+        det_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._race_label = QLabel("—")
         det_layout.addRow("Race:", self._race_label)
@@ -90,7 +126,8 @@ class SquadronTab(QWidget):
         det_layout.addRow("Rank:", self._rank_combo)
 
         self._ship_combo = QComboBox()
-        self._ship_combo.setMinimumWidth(200)
+        self._ship_combo.setMinimumContentsLength(16)
+        self._ship_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._ship_combo.currentIndexChanged.connect(self._on_ship_selected)
         det_layout.addRow("Ship:", self._ship_combo)
 
@@ -101,15 +138,34 @@ class SquadronTab(QWidget):
         self._ship_seed = SeedEditor("Ship Seed")
         self._ship_seed.seed_changed.connect(self._on_ship_seed_changed)
         det_layout.addRow("Ship Seed:", self._ship_seed)
+        top_layout.addWidget(self._details_group, 0, Qt.AlignmentFlag.AlignTop)
 
-        right_layout.addWidget(details)
+        self._specs_group = QGroupBox("Ship Specs / DPS")
+        self._specs_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        specs_layout = QFormLayout(self._specs_group)
+        self._ship_specs_name = QLabel("—")
+        self._ship_specs_name.setWordWrap(True)
+        specs_layout.addRow("Name:", self._ship_specs_name)
+        self._ship_specs_type = QLabel("—")
+        specs_layout.addRow("Type:", self._ship_specs_type)
+        self._ship_specs_class = QLabel("—")
+        specs_layout.addRow("Class:", self._ship_specs_class)
+        self._ship_specs_dps = QLabel("—")
+        specs_layout.addRow("DPS:", self._ship_specs_dps)
+        top_layout.addWidget(self._specs_group, 1)
+
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(general_top)
 
         # Unlocked slots info
         self._slots_label = QLabel("—")
         right_layout.addWidget(self._slots_label)
 
         right_layout.addStretch()
-        self._general_splitter.addWidget(general_top)
+        top_container = QWidget()
+        top_container.setLayout(right_layout)
+        self._general_splitter.addWidget(top_container)
         self._tabs.addTab(general_tab, "General")
 
         self._preview_panel = QWidget()
@@ -188,17 +244,17 @@ class SquadronTab(QWidget):
 
         # Select matching ship in combo by filename
         ship_filename = ship.get("Filename", "")
+        selected_ship_idx = self._find_ship_index_for_resource(ship_filename)
         self._ship_combo.blockSignals(True)
-        for i in range(self._ship_combo.count()):
-            ship_idx = self._ship_combo.itemData(i)
-            if ship_idx is not None and ship_idx < len(self._ships):
-                player_ship = self._ships[ship_idx]
-                if player_ship.get("Resource", {}).get("Filename", "") == ship_filename:
-                    self._ship_combo.setCurrentIndex(i)
-                    break
+        if selected_ship_idx >= 0:
+            combo_index = self._ship_combo.findData(selected_ship_idx)
+            self._ship_combo.setCurrentIndex(combo_index if combo_index >= 0 else 0)
+        else:
+            self._ship_combo.setCurrentIndex(-1)
         self._ship_combo.blockSignals(False)
         self._npc_seed.set_seed(npc.get("Seed", ""))
         self._ship_seed.set_seed(ship.get("Seed", ""))
+        self._update_ship_specs(selected_ship_idx, ship)
         self._update_preview(ship)
 
     def _on_ship_selected(self, combo_index):
@@ -215,6 +271,7 @@ class SquadronTab(QWidget):
             "Filename": resource.get("Filename", ""),
             "Seed": player_ship.get("Seed", ""),
         }
+        self._update_ship_specs(ship_idx, pilot["ShipResource"])
         self._update_preview(pilot["ShipResource"])
 
     def _on_rank_changed(self, index):
@@ -241,7 +298,42 @@ class SquadronTab(QWidget):
             ship = pilot.get("ShipResource", {})
             if isinstance(ship, dict):
                 ship["Seed"] = seed
+                selected_ship_idx = self._find_ship_index_for_resource(ship.get("Filename", ""))
+                self._update_ship_specs(selected_ship_idx, ship)
                 self._update_preview(ship)
+
+    def _find_ship_index_for_resource(self, ship_filename: str) -> int:
+        normalized_target = _normalize_resource_path(ship_filename)
+        if not normalized_target:
+            return -1
+        for i, ship in enumerate(self._ships):
+            filename = ship.get("Resource", {}).get("Filename", "")
+            if _normalize_resource_path(filename) == normalized_target:
+                return i
+        target_name = normalized_target.split("/")[-1]
+        for i, ship in enumerate(self._ships):
+            filename = ship.get("Resource", {}).get("Filename", "")
+            if _normalize_resource_path(filename).split("/")[-1] == target_name:
+                return i
+        return -1
+
+    def _update_ship_specs(self, ship_idx: int, ship_resource: dict) -> None:
+        if 0 <= ship_idx < len(self._ships):
+            ship = self._ships[ship_idx]
+            name = ship.get("Name", "") or f"Ship {ship_idx + 1}"
+            ship_type = _extract_ship_type(ship.get("Resource", {}))
+            ship_class = _extract_ship_class(ship)
+            damage = _extract_ship_damage(ship)
+            self._ship_specs_name.setText(name)
+            self._ship_specs_type.setText(ship_type)
+            self._ship_specs_class.setText(ship_class)
+            self._ship_specs_dps.setText(f"{damage:.0f}" if damage else "—")
+            return
+        resource = ship_resource.get("Filename", "") if isinstance(ship_resource, dict) else ""
+        self._ship_specs_name.setText("Unlinked ship")
+        self._ship_specs_type.setText(_extract_ship_type({"Filename": resource}))
+        self._ship_specs_class.setText("—")
+        self._ship_specs_dps.setText("—")
 
     def _ensure_preview_view(self) -> None:
         if self._preview_view is not None:
