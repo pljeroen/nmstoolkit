@@ -450,6 +450,7 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
         from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
         from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
         from nmstoolkit.core.geometry_parser import parse_geometry
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
         from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
         from nmstoolkit.core.scene_parser import parse_scene
     except Exception as exc:
@@ -538,7 +539,19 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
                 pass
             data_ref = ref.replace(".geometry.mbin", ".geometry.data.mbin")
             data_bytes = geo_map.get(data_ref) or geo_map.get(data_ref + ".pc")
+            # Try raw binary stream first (no MBINCompiler needed)
             if geo_exml and data_bytes is not None:
+                try:
+                    raw_meshes = parse_geometry_raw_stream(geo_exml, data_bytes)
+                    if raw_meshes:
+                        base_meshes = [m for m in raw_meshes if _mesh_is_valid(m)]
+                        if base_meshes:
+                            stream_ok += 1
+                        decoded_by_ref[ref] = base_meshes
+                except Exception:
+                    pass
+            # Fallback: try MBINCompiler conversion of stream data
+            if not base_meshes and geo_exml and data_bytes is not None:
                 try:
                     stream_exml = converter.convert(data_bytes)
                     stream_meshes = parse_geometry_stream_exml(geo_exml, stream_exml)

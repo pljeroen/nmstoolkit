@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
 from nmstoolkit.core.geometry_parser import parse_geometry
+from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
 from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
 from nmstoolkit.core.mesh_data import MaterialData, Mesh, SceneMeshEntry, SceneNode, Transform
 from nmstoolkit.core.scene_parser import parse_scene
@@ -184,7 +185,7 @@ def _decode_geometry(
 ) -> List[Mesh]:
     """Decode geometry for a given reference, using format priority.
 
-    Priority: stream EXML → binary → AABB fallback.
+    Priority: raw stream → stream EXML → binary → AABB fallback.
     Results are cached per geo_ref to avoid redundant decoding.
     Lookups are normalized (lowercase, forward-slash) to handle EXML refs
     that use backslashes or mixed case.
@@ -193,8 +194,28 @@ def _decode_geometry(
     if norm_ref in cache:
         return cache[norm_ref]
 
-    # Try stream EXML first (highest fidelity for modern .mbin.pc)
     exml_pair = geometry_exml.get(norm_ref) or geometry_exml.get(geo_ref)
+
+    # Try raw binary stream first (highest fidelity, no MBINCompiler needed)
+    if exml_pair is not None:
+        geo_exml_str = exml_pair[0]
+        if geo_exml_str:
+            data_ref = norm_ref.replace(".geometry.mbin", ".geometry.data.mbin")
+            raw_data = (
+                geometry_data.get(data_ref)
+                or geometry_data.get(data_ref + ".pc")
+                or geometry_data.get(geo_ref.replace(".geometry.mbin", ".geometry.data.mbin"))
+            )
+            if raw_data is not None:
+                try:
+                    result = parse_geometry_raw_stream(geo_exml_str, raw_data)
+                    if result:
+                        cache[norm_ref] = result
+                        return result
+                except Exception:
+                    pass
+
+    # Try stream EXML (MBINCompiler-converted stream data)
     if exml_pair is not None:
         geo_exml_str, stream_exml_str = exml_pair
         if geo_exml_str and stream_exml_str:
