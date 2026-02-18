@@ -70,6 +70,8 @@ class TestSettlementOwnershipDetection:
             "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
         }
         tab = SettlementsTab()
+        assert hasattr(tab, "_left_panel")
+        assert hasattr(tab, "_right_panel")
         tab.set_data(psd)
         assert tab._combo.count() == 1
         assert "My Town" in tab._combo.itemText(0)
@@ -240,6 +242,27 @@ class TestSettlementProductionDisplay:
         assert len(tab._prod_rows) == 2
         assert tab._prod_rows[0]["amount"].value() == 100
         assert tab._prod_rows[1]["amount"].value() == 50
+        assert tab._prod_rows[0]["output"].count() >= 1
+
+    def test_production_output_dropdown_writeback(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD")
+        settlement["ProductionState"] = [
+            {"ElementId": "^FUEL1", "Amount": 100, "Cap": 500, "RateMultiplier": 1.5},
+            {"ElementId": "^TECH_COMP", "Amount": 50, "Cap": 200, "RateMultiplier": 0.75},
+        ]
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        idx = tab._prod_rows[0]["output"].findData("^TECH_COMP")
+        assert idx >= 0
+        tab._prod_rows[0]["output"].setCurrentIndex(idx)
+        assert settlement["ProductionState"][0]["ElementId"] == "^TECH_COMP"
 
     def test_production_amount_writeback(self):
         from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
@@ -324,6 +347,40 @@ class TestSettlementQOL:
         tab.set_data(psd)
         assert tab._race_label.text() == "Korvax"
 
+
+class TestSettlementPreview:
+    def test_preview_panel_exists(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        tab = SettlementsTab()
+        assert hasattr(tab, "_preview_identity")
+        assert hasattr(tab, "_preview_status")
+        assert hasattr(tab, "_preview_placeholder")
+
+    def test_preview_identity_updates_on_selection(self, monkeypatch):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        monkeypatch.setattr(
+            "nmstoolkit.gui.tabs.settlements_tab.resolve_settlement_scene",
+            lambda race: "models/planets/biomes/common/buildings/settlement/tower_stone.scene.mbin",
+        )
+        monkeypatch.setattr(
+            SettlementsTab,
+            "_start_preview_load",
+            lambda self, resource: self._preview_status.setText(f"queued: {resource}"),
+        )
+        settlement = _make_settlement(name="Preview Town", seed="0xABCD")
+        settlement["Race"] = {"AlienRace": "Korvax"}
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        assert "Preview Town" in tab._preview_identity.text()
+        assert "tower_stone.scene.mbin" in tab._preview_identity.text()
+
     def test_address_displayed(self):
         from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
 
@@ -393,7 +450,7 @@ class TestSettlementPerks:
         }
         tab = SettlementsTab()
         tab.set_data(psd)
-        assert tab._perk_list.count() == 2
+        assert tab._perk_table.rowCount() == 2
 
     def test_perk_add(self):
         from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
@@ -422,9 +479,10 @@ class TestSettlementPerks:
         }
         tab = SettlementsTab()
         tab.set_data(psd)
-        tab._perk_list.setCurrentRow(0)
+        tab._perk_table.setCurrentCell(0, 0)
         tab._on_remove_perk()
         assert len(settlement["Perks"]) == 1
+        assert tab._perk_table.rowCount() == 1
 
     def test_perk_names_resolved(self):
         """Perks should show human-readable names from settlements.json."""
@@ -438,6 +496,21 @@ class TestSettlementPerks:
         }
         tab = SettlementsTab()
         tab.set_data(psd)
-        # The perk list item should show a name, not just the ID
-        text = tab._perk_list.item(0).text()
+        # The perk table should show a name, not just the raw ID
+        text = tab._perk_table.item(0, 0).text()
         assert text != "^STARTING_NEG1"  # Should be resolved to friendly name
+
+    def test_perk_proc_hash_resolved_readably(self):
+        from nmstoolkit.gui.tabs.settlements_tab import SettlementsTab
+
+        settlement = _make_settlement(seed="0xABCD", perks=["^PROC_SENT#59695"])
+        psd = {
+            "SettlementStatesV2": [settlement],
+            "SettlementStateRingBufferIndexV2": 0,
+            "SettlementLocalSaveData": [_make_local_save_data("0xABCD")],
+        }
+        tab = SettlementsTab()
+        tab.set_data(psd)
+        readable = tab._perk_table.item(0, 0).text()
+        assert "PROC_SENT#59695" not in readable
+        assert "59695" in readable

@@ -183,6 +183,16 @@ class ExpeditionTab(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        content_panel = QWidget()
+        content_layout = QHBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._left_panel = QWidget()
+        left_layout = QVBoxLayout(self._left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_panel = QWidget()
+        right_layout = QVBoxLayout(self._right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         # Current season info
         season_group = QGroupBox("Current Expedition")
@@ -198,7 +208,7 @@ class ExpeditionTab(QWidget):
         progress_row.addStretch()
         season_layout.addLayout(progress_row)
 
-        layout.addWidget(season_group)
+        left_layout.addWidget(season_group)
 
         # Milestone progress table
         milestone_group = QGroupBox("Milestone Progress")
@@ -215,7 +225,7 @@ class ExpeditionTab(QWidget):
         self._milestone_table.setAlternatingRowColors(True)
         milestone_layout.addWidget(self._milestone_table)
 
-        layout.addWidget(milestone_group)
+        left_layout.addWidget(milestone_group)
 
         # Redeemed season rewards
         rewards_group = QGroupBox("Redeemed Season Rewards")
@@ -248,7 +258,7 @@ class ExpeditionTab(QWidget):
         self._rewards_table.setAlternatingRowColors(True)
         rewards_layout.addWidget(self._rewards_table)
 
-        layout.addWidget(rewards_group)
+        right_layout.addWidget(rewards_group)
 
         # Twitch Rewards
         twitch_group = QGroupBox("Twitch Rewards")
@@ -263,7 +273,7 @@ class ExpeditionTab(QWidget):
         )
         self._twitch_table.setAlternatingRowColors(True)
         twitch_layout.addWidget(self._twitch_table)
-        layout.addWidget(twitch_group)
+        right_layout.addWidget(twitch_group)
 
         # Platform Rewards
         platform_group = QGroupBox("Platform Rewards")
@@ -278,7 +288,7 @@ class ExpeditionTab(QWidget):
         )
         self._platform_table.setAlternatingRowColors(True)
         platform_layout.addWidget(self._platform_table)
-        layout.addWidget(platform_group)
+        right_layout.addWidget(platform_group)
 
         # Offline expedition replay
         replay_group = QGroupBox("Offline Expedition Replay")
@@ -319,7 +329,11 @@ class ExpeditionTab(QWidget):
         self._replay_status.setWordWrap(True)
         replay_layout.addWidget(self._replay_status)
 
-        layout.addWidget(replay_group)
+        left_layout.addWidget(replay_group)
+
+        content_layout.addWidget(self._left_panel, 1)
+        content_layout.addWidget(self._right_panel, 1)
+        layout.addWidget(content_panel)
 
     def set_data(self, psd: dict, common_state: dict = None):
         self._data = psd

@@ -100,7 +100,7 @@ class TestSaveProfile:
         slot = SaveSlot(1, Path("/fake/save.hg"), "Test", 0.0)
         profile = SaveProfile(
             steam_id="76561198078575175",
-            path=Path("/fake/st_76561198078575175"),
+            path=Path("/fake/profile_76561198078575175"),
             save_slots=[slot],
         )
         assert profile.steam_id == "76561198078575175"

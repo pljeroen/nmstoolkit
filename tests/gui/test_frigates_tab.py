@@ -169,3 +169,21 @@ class TestFrigatesTabSetData:
         # Should display something meaningful, not raw IDs
         assert traits_text != "None"
         assert "LIVING_COM_BITTER" not in traits_text or len(traits_text) > 20
+
+    def test_general_has_compact_details_and_info_table(self, qapp):
+        from PySide6.QtWidgets import QSizePolicy
+
+        tab = FrigatesTab()
+        assert hasattr(tab, "_details_group")
+        assert hasattr(tab, "_frigate_info_table")
+        assert tab._details_group.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+        assert tab._frigate_info_table.columnCount() == 4
+
+    def test_frigate_info_table_populates_on_selection(self, qapp):
+        tab = FrigatesTab()
+        psd = {"FleetFrigates": [_make_frigate(name="InfoFrigate", inv_class="S", stats=[73, 5, 3, 2, 1, 0, 0, 0, 0, 0, 0])]}
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert tab._frigate_info_table.rowCount() >= 2
+        assert "InfoFrigate" in tab._frigate_info_table.item(0, 0).text()
+        assert "S" in tab._frigate_info_table.item(0, 2).text()

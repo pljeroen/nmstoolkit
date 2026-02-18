@@ -3,7 +3,11 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from nmstoolkit.gui.tabs.fish_finder_tab import FishFinderTab, _FISH_BAIT_INFO
+from nmstoolkit.gui.tabs.fish_finder_tab import (
+    FishFinderTab,
+    _FISH_BAIT_INFO,
+    _FISH_CREATURE_ICON_ID,
+)
 
 
 @pytest.fixture(scope="module")
@@ -53,3 +57,7 @@ class TestFishFinderTab:
             assert "id" in bait
             assert "name" in bait
             assert "condition" in bait
+
+    def test_creature_icon_mapping_targets_real_item_ids(self):
+        assert _FISH_CREATURE_ICON_ID["^FISH"] == "^ANY_FISH"
+        assert _FISH_CREATURE_ICON_ID["^JELLYFISH"] == "^F_BOSS_JELLY"

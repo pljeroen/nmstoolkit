@@ -2,24 +2,36 @@
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
-    QListWidget,
+    QProgressBar,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from nmstoolkit.core.game_catalogue import GameCatalogue
+from nmstoolkit.gui.preview_support import (
+    PreviewLoadThread,
+    configure_preview_view,
+    load_template_preview_meshes,
+    resolve_settlement_scene,
+)
 from nmstoolkit.gui.tabs.bases_tab import _decode_galactic_address
 from nmstoolkit.gui.widgets.inventory_grid import get_item_display_name
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
-from nmstoolkit.paths import resource_dir
+from nmstoolkit.paths import cache_icons_dir, resource_dir
 
 _DATA_DIR = resource_dir()
 
@@ -37,6 +49,62 @@ def _load_perk_data():
 _PERK_DATA = _load_perk_data()
 
 
+def _load_output_options() -> list[tuple[str, str]]:
+    """Load settlement output options from cached game data.
+
+    Uses Tradeable products as the canonical pool. Current settlement output IDs are
+    always preserved in the combo even if they fall outside this pool.
+    """
+    options: dict[str, str] = {}
+
+    cat_path = cache_icons_dir() / "game_catalogue.json"
+    if cat_path.exists():
+        try:
+            cat = GameCatalogue.from_json(cat_path.read_text(encoding="utf-8"))
+            for item in cat.products:
+                if str(item.get("type", "")) != "Tradeable":
+                    continue
+                raw_id = str(item.get("id", "")).strip()
+                if not raw_id:
+                    continue
+                item_id = raw_id if raw_id.startswith("^") else f"^{raw_id}"
+                label = item.get("display_name") or item.get("name") or get_item_display_name(item_id)
+                options[item_id] = str(label)
+        except Exception:
+            pass
+
+    if not options:
+        items_path = _DATA_DIR / "items.json"
+        if items_path.exists():
+            with open(items_path, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            for item in items:
+                if item.get("type") != "product":
+                    continue
+                # legacy fallback: keep known settlement/trade-like families
+                item_id_raw = str(item.get("id", "")).lstrip("^").upper()
+                if not (
+                    item_id_raw.startswith("TRA_")
+                    or item_id_raw.startswith("SALVAGE_")
+                    or item_id_raw.startswith("ILLEGAL_")
+                    or item_id_raw.startswith("ALLOY")
+                    or item_id_raw.startswith("FARMPROD")
+                    or item_id_raw.startswith("REACTION")
+                    or item_id_raw.startswith("COMPOUND")
+                    or item_id_raw.startswith("MEGAPROD")
+                    or item_id_raw.startswith("ULTRAPROD")
+                ):
+                    continue
+                raw_id = str(item.get("id", "")).strip()
+                if not raw_id:
+                    continue
+                item_id = raw_id if raw_id.startswith("^") else f"^{raw_id}"
+                options[item_id] = str(item.get("name") or get_item_display_name(item_id))
+
+    sorted_items = sorted(options.items(), key=lambda kv: kv[1].casefold())
+    return [(item_id, f"{label} ({item_id})") for item_id, label in sorted_items]
+
+
 def _perk_display_name(perk_id: str) -> str:
     """Resolve a perk ID to a human-readable name."""
     entry = _PERK_DATA.get(perk_id)
@@ -47,7 +115,17 @@ def _perk_display_name(perk_id: str) -> str:
         elif entry.get("beneficial") is False:
             return f"{name} (-)"
         return name
-    return perk_id.lstrip("^")
+    raw = perk_id.lstrip("^")
+    if "#" in raw:
+        base, suffix = raw.split("#", 1)
+        resolved = get_item_display_name(f"^{base}")
+        if resolved != f"^{base}" and resolved != base:
+            return f"{resolved} #{suffix}"
+        return f"{base.replace('_', ' ').title()} #{suffix}"
+    resolved = get_item_display_name(perk_id)
+    if resolved != perk_id and resolved != raw:
+        return resolved
+    return raw.replace("_", " ").title()
 
 # Stats array indices (V2 format) — Population is stored separately
 _STATS_ARRAY_NAMES = [
@@ -66,6 +144,10 @@ class SettlementsTab(QWidget):
         self._settlements = []
         self._current_index = -1
         self._prod_rows = []
+        self._output_options = _load_output_options()
+        self._preview_view: Optional[QWidget] = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -80,6 +162,17 @@ class SettlementsTab(QWidget):
         sel_bar.addWidget(self._combo)
         sel_bar.addStretch()
         layout.addLayout(sel_bar)
+
+        content_panel = QWidget()
+        content_layout = QHBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._left_panel = QWidget()
+        left_layout = QVBoxLayout(self._left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self._right_panel = QWidget()
+        right_layout = QVBoxLayout(self._right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         details = QGroupBox("Settlement Details")
         det_layout = QFormLayout(details)
@@ -114,15 +207,22 @@ class SettlementsTab(QWidget):
         self._judgement_label = QLabel("—")
         det_layout.addRow("Pending Judgement:", self._judgement_label)
 
-        layout.addWidget(details)
+        left_layout.addWidget(details)
 
-        # Perks group with list, dropdown, add/remove
+        # Perks group with table, dropdown, add/remove
         perks_group = QGroupBox("Settlement Perks")
         perks_layout = QVBoxLayout(perks_group)
 
-        self._perk_list = QListWidget()
-        self._perk_list.setMaximumHeight(120)
-        perks_layout.addWidget(self._perk_list)
+        self._perk_table = QTableWidget(0, 2)
+        self._perk_table.setHorizontalHeaderLabels(["Perk", "ID"])
+        self._perk_table.horizontalHeader().setStretchLastSection(False)
+        self._perk_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._perk_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._perk_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self._perk_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._perk_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._perk_table.setMaximumHeight(180)
+        perks_layout.addWidget(self._perk_table)
 
         perk_btn_row = QHBoxLayout()
         self._perk_combo = QComboBox()
@@ -142,14 +242,34 @@ class SettlementsTab(QWidget):
 
         perk_btn_row.addStretch()
         perks_layout.addLayout(perk_btn_row)
-        layout.addWidget(perks_group)
+        right_layout.addWidget(perks_group)
+
+        preview_group = QGroupBox("Settlement Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        self._preview_identity = QLabel("Settlement: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a settlement")
+        self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(260)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
+        preview_layout.addWidget(self._preview_placeholder, 1)
+        right_layout.addWidget(preview_group, 1)
 
         # Production Output group
         self._prod_group = QGroupBox("Production Output")
         self._prod_layout = QVBoxLayout(self._prod_group)
-        layout.addWidget(self._prod_group)
+        left_layout.addWidget(self._prod_group)
 
-        layout.addStretch()
+        content_layout.addWidget(self._left_panel, 1)
+        content_layout.addWidget(self._right_panel, 1)
+        layout.addWidget(content_panel)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -225,11 +345,7 @@ class SettlementsTab(QWidget):
 
         # Populate perk list
         perks = s.get("Perks", [])
-        self._perk_list.clear()
-        if isinstance(perks, list):
-            for perk_id in perks:
-                if perk_id:
-                    self._perk_list.addItem(_perk_display_name(str(perk_id)))
+        self._refresh_perks_table(perks if isinstance(perks, list) else [])
 
         judgement = s.get("PendingJudgementType", {})
         if isinstance(judgement, dict):
@@ -240,6 +356,7 @@ class SettlementsTab(QWidget):
 
         # Production output
         self._populate_production(s)
+        self._update_preview(s)
 
     def _populate_production(self, settlement: dict):
         """Populate production output editors from settlement ProductionState."""
@@ -258,6 +375,11 @@ class SettlementsTab(QWidget):
         production = settlement.get("ProductionState", [])
         if not isinstance(production, list):
             return
+        current_output_ids = sorted({
+            str(entry.get("ElementId", ""))
+            for entry in production
+            if isinstance(entry, dict) and entry.get("ElementId")
+        })
 
         for i, entry in enumerate(production):
             if not isinstance(entry, dict):
@@ -265,11 +387,28 @@ class SettlementsTab(QWidget):
 
             row_data = {}
 
-            # Item name (read-only)
             element_id = entry.get("ElementId", "")
-            item_name = get_item_display_name(element_id) if element_id else "Unknown"
-            item_label = QLabel(f"{item_name} ({element_id})" if element_id else "Empty")
-            item_label.setStyleSheet("font-weight: bold;")
+            output_combo = QComboBox()
+            output_combo.setMinimumWidth(220)
+            for out_id, out_label in self._output_options:
+                output_combo.addItem(out_label, out_id)
+            for out_id in current_output_ids:
+                if out_id and output_combo.findData(out_id) < 0:
+                    out_name = get_item_display_name(out_id)
+                    out_label = f"{out_name} ({out_id})" if out_name and out_name != out_id else out_id
+                    output_combo.addItem(out_label, out_id)
+            if element_id and output_combo.findData(element_id) < 0:
+                out_name = get_item_display_name(element_id)
+                out_label = f"{out_name} ({element_id})" if out_name and out_name != element_id else element_id
+                output_combo.addItem(out_label, element_id)
+            current_idx = output_combo.findData(element_id)
+            output_combo.setCurrentIndex(current_idx if current_idx >= 0 else 0)
+            output_combo.currentIndexChanged.connect(
+                lambda _val, idx=i, combo=output_combo: self._on_production_changed(
+                    idx, "ElementId", combo.currentData() or ""
+                )
+            )
+            row_data["output"] = output_combo
 
             # Amount
             amount_spin = StatEditor("Amount", 0, 99999)
@@ -300,7 +439,7 @@ class SettlementsTab(QWidget):
 
             # Layout for this production line
             row_layout = QFormLayout()
-            row_layout.addRow(f"Line {i + 1}:", item_label)
+            row_layout.addRow(f"Line {i + 1}:", output_combo)
             row_layout.addRow("Amount:", amount_spin)
             row_layout.addRow("Cap:", cap_spin)
             row_layout.addRow("Rate:", rate_spin)
@@ -330,20 +469,108 @@ class SettlementsTab(QWidget):
         perks = s.get("Perks", [])
         perks.append(perk_id)
         s["Perks"] = perks
-        self._perk_list.addItem(_perk_display_name(perk_id))
+        self._refresh_perks_table(perks)
 
     def _on_remove_perk(self):
         """Remove selected perk from settlement."""
         s = self._current_settlement()
         if s is None:
             return
-        row = self._perk_list.currentRow()
+        selected = self._perk_table.selectedItems()
+        row = selected[0].row() if selected else -1
         perks = s.get("Perks", [])
         if row < 0 or row >= len(perks):
             return
         perks.pop(row)
         s["Perks"] = perks
-        self._perk_list.takeItem(row)
+        self._refresh_perks_table(perks)
+
+    def _ensure_preview_view(self) -> None:
+        if self._preview_view is not None:
+            return
+        try:
+            from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        except Exception:
+            self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
+            return
+        self._preview_view = Corvette3DView(self)
+        configure_preview_view(self._preview_view)
+        self._preview_placeholder.parentWidget().layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_placeholder.hide()
+        self._preview_view.show()
+
+    def _load_preview_meshes(self, resource_filename: str):
+        return load_template_preview_meshes(resource_filename)
+
+    def _update_preview(self, settlement: dict) -> None:
+        race_obj = settlement.get("Race", {})
+        race = race_obj.get("AlienRace", "") if isinstance(race_obj, dict) else str(race_obj)
+        resource = resolve_settlement_scene(race)
+        name = settlement.get("Name", "") or "(Unnamed)"
+        self._preview_identity.setText(f"Settlement: {name}\nResource: {resource or '—'}")
+        if not resource:
+            self._preview_status.setText("Preview unavailable: settlement scene not resolved.")
+            self._preview_progress.setVisible(False)
+            return
+        if not self.isVisible():
+            self._preview_status.setText("Open Settlements tab to load preview.")
+            self._preview_progress.setVisible(False)
+            return
+        self._start_preview_load(resource)
+
+    def _start_preview_load(self, resource: str) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
+            self._preview_status.setText(status)
+            return
+        self._ensure_preview_view()
+        if self._preview_view is None:
+            return
+        self._preview_view.set_modules(
+            {
+                "Width": 1,
+                "Height": 1,
+                "Slots": [{"Id": "^SETTLEMENT_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
+            }
+        )
+        self._preview_view.set_mesh_data("SETTLEMENT_PREVIEW", mesh_list)
+        self._preview_status.setText(status)
+        self._preview_view.update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        current = self._current_settlement()
+        if current is not None:
+            self._update_preview(current)
+
+    def _refresh_perks_table(self, perks: list) -> None:
+        self._perk_table.setRowCount(0)
+        for perk_id in perks:
+            if not perk_id:
+                continue
+            row = self._perk_table.rowCount()
+            self._perk_table.insertRow(row)
+            self._perk_table.setItem(row, 0, QTableWidgetItem(_perk_display_name(str(perk_id))))
+            self._perk_table.setItem(row, 1, QTableWidgetItem(str(perk_id)))
 
     def _on_stat_changed(self, stat_name, value):
         """Write stat changes back to the settlement data dict."""
@@ -368,8 +595,11 @@ class SettlementsTab(QWidget):
         self._buildings_label.setText("—")
         for editor in self._stat_editors.values():
             editor.set_value(0)
-        self._perk_list.clear()
+        self._perk_table.setRowCount(0)
         self._judgement_label.setText("—")
+        self._preview_identity.setText("Settlement: —\nResource: —")
+        self._preview_status.setText("Preview: select a settlement")
+        self._preview_progress.setVisible(False)
         self._prod_rows = []
         while self._prod_layout.count():
             child = self._prod_layout.takeAt(0)

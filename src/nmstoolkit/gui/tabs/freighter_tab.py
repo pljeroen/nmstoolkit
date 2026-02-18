@@ -17,6 +17,7 @@ from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
 from nmstoolkit.gui.preview_support import (
+    configure_preview_view,
     find_scene_resource_filename,
     load_template_preview_meshes,
     seed_to_text,
@@ -187,10 +188,7 @@ class FreighterTab(QWidget):
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
         self._preview_view = Corvette3DView(self._preview_tab)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
+        configure_preview_view(self._preview_view)
         self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()

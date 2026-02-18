@@ -1,7 +1,7 @@
 {
   "source": {
-    "pak_dir": "/home/jeroen/dev/NMS_GameFiles/No Man's Sky/GAMEDATA/PCBANKS",
-    "mbin_compiler": "/home/jeroen/dev/nmstoolkit/src/nmstoolkit/data/ExternalTools/MBINCompiler/MBINCompiler-linux",
+    "pak_dir": "<NMS_GAME_DIR>/GAMEDATA/PCBANKS",
+    "mbin_compiler": "<MBIN_COMPILER_PATH>",
     "table": "metadata/reality/tables/nms_reality_gctechnologytable.mbin"
   },
   "counts": {

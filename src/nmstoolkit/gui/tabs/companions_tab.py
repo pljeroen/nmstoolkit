@@ -7,13 +7,16 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
     QScrollArea,
-    QTabWidget,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
 from nmstoolkit.gui.preview_support import (
+    configure_preview_view,
     find_scene_resource_filename,
     load_template_preview_meshes,
     resolve_companion_scene,
@@ -85,6 +89,23 @@ def _friendly_creature_name(creature_id: str) -> str:
     return "".join(result).title()
 
 
+def _friendly_descriptor_name(descriptor: str) -> str:
+    raw = descriptor.lstrip("^").strip("_")
+    if not raw:
+        return "Unknown Trait"
+    parts = [p for p in raw.split("_") if p]
+    friendly_parts = []
+    for part in parts:
+        upper = part.upper()
+        if upper in _CREATURE_NAMES:
+            friendly_parts.append(_CREATURE_NAMES[upper])
+        elif part.isdigit():
+            friendly_parts.append(str(int(part)))
+        else:
+            friendly_parts.append(part.title())
+    return " ".join(friendly_parts)
+
+
 class CompanionsTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -125,13 +146,18 @@ class CompanionsTab(QWidget):
 
         layout.addWidget(left)
 
-        self._tabs = QTabWidget()
-        general_tab = QWidget()
-        right_layout = QVBoxLayout(general_tab)
+        content_panel = QWidget()
+        content_layout = QHBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        left_editor = QWidget()
+        left_editor_layout = QVBoxLayout(left_editor)
+        left_editor_layout.setContentsMargins(0, 0, 0, 0)
+        left_editor.setMaximumWidth(480)
 
-        # Identity
-        details = QGroupBox("Companion Details")
-        det_layout = QFormLayout(details)
+        self._details_group = QGroupBox("Companion Details")
+        self._details_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._details_group.setMaximumWidth(380)
+        det_layout = QFormLayout(self._details_group)
 
         self._name_edit = QLineEdit()
         self._name_edit.editingFinished.connect(self._on_name_changed)
@@ -147,7 +173,19 @@ class CompanionsTab(QWidget):
         self._seed_editor.seed_changed.connect(self._on_seed_changed)
         det_layout.addRow("Seed:", self._seed_editor)
 
-        right_layout.addWidget(details)
+        left_editor_layout.addWidget(self._details_group, 0)
+
+        info_group = QGroupBox("Companion Info")
+        info_layout = QVBoxLayout(info_group)
+        self._companion_info_table = QTableWidget(0, 4)
+        self._companion_info_table.setHorizontalHeaderLabels(["Name", "Type", "Class", "Value"])
+        self._companion_info_table.verticalHeader().setVisible(False)
+        for col in range(4):
+            self._companion_info_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self._companion_info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._companion_info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        info_layout.addWidget(self._companion_info_table)
+        left_editor_layout.addWidget(info_group, 1)
 
         # Editable stats
         stats_group = QGroupBox("Stats")
@@ -179,7 +217,7 @@ class CompanionsTab(QWidget):
         self._egg_modified_check.toggled.connect(self._on_egg_modified_changed)
         stats_layout.addRow("Egg Modified:", self._egg_modified_check)
 
-        right_layout.addWidget(stats_group)
+        left_editor_layout.addWidget(stats_group)
 
         # Traits / Moods
         traits_group = QGroupBox("Traits & Moods")
@@ -211,10 +249,11 @@ class CompanionsTab(QWidget):
             traits_layout.addRow(_MOOD_LABELS[i], spin)
             self._mood_spins.append(spin)
 
-        right_layout.addWidget(traits_group)
+        left_editor_layout.addWidget(traits_group)
+        content_layout.addWidget(left_editor, 3)
 
         # Descriptors (editable gene traits) — dynamic list, scrollable
-        desc_group = QGroupBox("Descriptors (Gene Traits)")
+        desc_group = QGroupBox("Gene Traits")
         desc_outer = QVBoxLayout(desc_group)
         self._descriptors_label = QLabel("—")
         self._descriptors_label.setWordWrap(True)
@@ -248,13 +287,14 @@ class CompanionsTab(QWidget):
         btn_row.addStretch()
         desc_outer.addLayout(btn_row)
 
-        right_layout.addWidget(desc_group)
+        right_editor = QWidget()
+        right_editor_layout = QVBoxLayout(right_editor)
+        right_editor_layout.setContentsMargins(0, 0, 0, 0)
+        right_editor_layout.addWidget(desc_group)
+        right_editor.setMaximumWidth(520)
 
-        right_layout.addStretch()
-        self._tabs.addTab(general_tab, "General")
-
-        self._preview_tab = QWidget()
-        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_panel = QWidget()
+        preview_layout = QVBoxLayout(self._preview_panel)
         self._preview_identity = QLabel("Seed: —\nResource: —")
         self._preview_identity.setWordWrap(True)
         self._preview_fidelity = QLabel(
@@ -270,8 +310,9 @@ class CompanionsTab(QWidget):
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
         preview_layout.addWidget(self._preview_placeholder, 1)
-        self._tabs.addTab(self._preview_tab, "Preview")
-        layout.addWidget(self._tabs)
+        content_layout.addWidget(self._preview_panel, 4)
+        content_layout.addWidget(right_editor, 3)
+        layout.addWidget(content_panel)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -369,6 +410,7 @@ class CompanionsTab(QWidget):
             self._descriptors_label.setText("None")
 
         self._rebuild_descriptor_edits(active_descs)
+        self._update_companion_info(pet)
         self._update_preview(pet)
 
     def _rebuild_descriptor_edits(self, active_descs):
@@ -381,7 +423,11 @@ class CompanionsTab(QWidget):
         # Update the selectable list
         self._desc_list.clear()
         for i, desc in enumerate(active_descs):
-            self._desc_list.addItem(f"{i + 1}. {desc}")
+            friendly = _friendly_descriptor_name(desc)
+            item_text = f"{i + 1}. {friendly}"
+            if desc:
+                item_text = f"{item_text} ({desc})"
+            self._desc_list.addItem(item_text)
 
         # Create one edit per active descriptor
         for i, desc in enumerate(active_descs):
@@ -441,36 +487,43 @@ class CompanionsTab(QWidget):
         if pet is not None:
             text = self._name_edit.text()
             pet["CustomName"] = f"^{text}" if text else "^"
+            self._update_companion_info(pet)
 
     def _on_seed_changed(self, seed):
         pet = self._current_companion()
         if pet is not None:
             pet["CreatureSeed"] = seed
+            self._update_companion_info(pet)
 
     def _on_trust_changed(self, val):
         pet = self._current_companion()
         if pet is not None:
             pet["Trust"] = val
+            self._update_companion_info(pet)
 
     def _on_scale_changed(self, val):
         pet = self._current_companion()
         if pet is not None:
             pet["Scale"] = val
+            self._update_companion_info(pet)
 
     def _on_predator_changed(self, checked):
         pet = self._current_companion()
         if pet is not None:
             pet["Predator"] = checked
+            self._update_companion_info(pet)
 
     def _on_has_fur_changed(self, checked):
         pet = self._current_companion()
         if pet is not None:
             pet["HasFur"] = checked
+            self._update_companion_info(pet)
 
     def _on_egg_modified_changed(self, checked):
         pet = self._current_companion()
         if pet is not None:
             pet["EggModified"] = checked
+            self._update_companion_info(pet)
 
     def _on_trait_changed(self, idx, val):
         pet = self._current_companion()
@@ -481,6 +534,7 @@ class CompanionsTab(QWidget):
             traits.append(0.0)
         traits[idx] = val
         pet["Traits"] = traits
+        self._update_companion_info(pet)
 
     def _on_mood_changed(self, idx, val):
         pet = self._current_companion()
@@ -491,6 +545,23 @@ class CompanionsTab(QWidget):
             moods.append(0.0)
         moods[idx] = val
         pet["Moods"] = moods
+        self._update_companion_info(pet)
+
+    def _update_companion_info(self, pet: dict) -> None:
+        self._companion_info_table.setRowCount(0)
+        custom_name = (pet.get("CustomName", "") or "").strip("^")
+        display_name = custom_name or _friendly_creature_name(pet.get("CreatureID", ""))
+        species = _friendly_creature_name(pet.get("CreatureID", ""))
+        self._companion_info_table.insertRow(0)
+        self._companion_info_table.setItem(0, 0, QTableWidgetItem(display_name))
+        self._companion_info_table.setItem(0, 1, QTableWidgetItem(species))
+        self._companion_info_table.setItem(0, 2, QTableWidgetItem(str(pet.get("CreatureID", "—")).lstrip("^")))
+        self._companion_info_table.setItem(0, 3, QTableWidgetItem(f"Trust {pet.get('Trust', 0):.2f}"))
+        self._companion_info_table.insertRow(1)
+        self._companion_info_table.setItem(1, 0, QTableWidgetItem("Scale"))
+        self._companion_info_table.setItem(1, 1, QTableWidgetItem("Trait"))
+        self._companion_info_table.setItem(1, 2, QTableWidgetItem("—"))
+        self._companion_info_table.setItem(1, 3, QTableWidgetItem(f"{pet.get('Scale', 1.0):.2f}"))
 
     def _on_descriptor_changed(self, idx):
         pet = self._current_companion()
@@ -553,12 +624,9 @@ class CompanionsTab(QWidget):
         except Exception:
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
-        self._preview_view = Corvette3DView(self._preview_tab)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
-        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_view = Corvette3DView(self._preview_panel)
+        configure_preview_view(self._preview_view)
+        self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()
 

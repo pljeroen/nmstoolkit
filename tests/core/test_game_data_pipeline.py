@@ -5,12 +5,15 @@ Requires MBINCompiler and NMS game files.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-MBIN_COMPILER = Path("/tmp/nms_exml/MBINCompiler")
-GAME_DIR = Path("/media/sf_tdd/No Man's Sky")
+_mbin_compiler = os.environ.get("NMS_TEST_MBIN_COMPILER", "")
+MBIN_COMPILER = Path(_mbin_compiler) if _mbin_compiler else Path("/nonexistent")
+_game_dir = os.environ.get("NMS_TEST_GAME_DIR", "")
+GAME_DIR = Path(_game_dir) if _game_dir else Path("/nonexistent")
 PAK_DIR = GAME_DIR / "GAMEDATA" / "PCBANKS"
 
 needs_full_pipeline = pytest.mark.skipif(

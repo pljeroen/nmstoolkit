@@ -1,14 +1,16 @@
 """Shared test fixtures."""
 
 import json
+import os
 import struct
 from pathlib import Path
 
 import lz4.block
 import pytest
 
-# Path to real save files for integration tests
-SAVE_DIR = Path("/media/sf_tdd/st_76561198078575175")
+# Path to real save files for integration tests (env-driven, optional)
+_save_dir = os.environ.get("NMS_TEST_SAVE_DIR", "")
+SAVE_DIR = Path(_save_dir) if _save_dir else Path("/nonexistent")
 DATA_DIR = Path(__file__).resolve().parent.parent / "src" / "nmstoolkit" / "data"
 
 # Minimal valid JSON for test saves

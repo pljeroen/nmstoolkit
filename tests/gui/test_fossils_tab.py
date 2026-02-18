@@ -56,6 +56,13 @@ class TestFossilsTabCreation:
         tab.set_data(psd)
         assert tab._pieces_table.rowCount() >= 1
 
+    def test_overview_has_info_table(self):
+        from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
+
+        tab = FossilsTab()
+        assert hasattr(tab, "_fossil_info_table")
+        assert tab._fossil_info_table.columnCount() == 4
+
     def test_set_data_with_freighter_fossil(self):
         from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
 
@@ -226,3 +233,11 @@ class TestFossilFriendlyNames:
         # First column should show a name, not just raw ID
         item_text = tab._pieces_table.item(0, 0).text()
         assert item_text != "FOS_QUAD_BODY_AA"  # Should have been resolved
+
+    def test_fossil_info_table_updates_on_piece_selection(self):
+        from nmstoolkit.gui.tabs.fossils_tab import FossilsTab
+
+        tab = FossilsTab()
+        tab._update_fossil_info("Biped Body (AC)", "Biped", "Piece", "3")
+        assert tab._fossil_info_table.rowCount() >= 1
+        assert "Biped" in tab._fossil_info_table.item(0, 1).text()

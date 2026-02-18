@@ -48,6 +48,22 @@ def seed_to_text(seed_value) -> str:
     return "—"
 
 
+def configure_preview_view(view) -> None:
+    """Apply consistent framing defaults for template-level previews."""
+    if hasattr(view, "set_grid_visible"):
+        view.set_grid_visible(False)
+    if hasattr(view, "set_layering_enabled"):
+        view.set_layering_enabled(False)
+    if hasattr(view, "_cam_distance"):
+        view._cam_distance = 5.0  # type: ignore[attr-defined]
+    if hasattr(view, "_cam_target"):
+        view._cam_target = [0.0, 0.0, 0.0]  # type: ignore[attr-defined]
+    if hasattr(view, "_cam_pitch"):
+        view._cam_pitch = 24.0  # type: ignore[attr-defined]
+    if hasattr(view, "_cam_yaw"):
+        view._cam_yaw = 38.0  # type: ignore[attr-defined]
+
+
 def find_scene_resource_filename(payload: dict) -> str:
     """Best-effort lookup for a .SCENE.MBIN path in an entity dict."""
     if not isinstance(payload, dict):
@@ -259,6 +275,28 @@ def resolve_fossil_scene(fossil_id: str) -> str:
         if token.startswith(prefix):
             return _existing_scene([scene])
     return ""
+
+
+def resolve_settlement_scene(settlement_race: str) -> str:
+    """Resolve a representative settlement scene for preview."""
+    key = (settlement_race or "").strip().lower()
+    candidates = []
+    if "builder" in key or "autophage" in key:
+        candidates.extend(
+            [
+                "models/planets/biomes/common/buildings/settlement/tower_builders.scene.mbin",
+                "models/planets/biomes/common/buildings/settlement/monument/monument0builders.scene.mbin",
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                "models/planets/biomes/common/buildings/settlement/tower_stone.scene.mbin",
+                "models/planets/biomes/common/buildings/settlement/monument/monument0.scene.mbin",
+                "models/planets/biomes/common/buildings/settlement/summary_terminal.scene.mbin",
+            ]
+        )
+    return _existing_scene(candidates)
 
 
 def _normalize_ref(path: str) -> str:

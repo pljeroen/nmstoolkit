@@ -70,6 +70,13 @@ class TestCompanionsTabDescriptors:
         assert tab._descriptor_edits[1].text() == "_MOTHBODY_01"
         assert tab._descriptor_edits[2].text() == "_BWINGS_04"
 
+    def test_descriptor_list_uses_friendly_names(self, qapp):
+        tab = CompanionsTab()
+        pet = _make_pet(descriptors=["^_TREX_4"])
+        tab.set_data({"Pets": [pet]})
+        tab._list.setCurrentRow(0)
+        assert "T-Rex 4" in tab._desc_list.item(0).text()
+
     def test_descriptors_editable(self, qapp):
         """Descriptors should be editable via line edits."""
         tab = CompanionsTab()
@@ -105,6 +112,23 @@ class TestCompanionsTabDescriptors:
         tab._descriptor_edits[0].setText("_NEWWING_01")
         tab._on_descriptor_changed(0)
         assert pet["EggModified"] is True
+
+    def test_general_has_compact_details_and_info_table(self, qapp):
+        from PySide6.QtWidgets import QSizePolicy
+
+        tab = CompanionsTab()
+        assert hasattr(tab, "_details_group")
+        assert hasattr(tab, "_companion_info_table")
+        assert tab._details_group.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+        assert tab._companion_info_table.columnCount() == 4
+
+    def test_companion_info_table_populates_on_selection(self, qapp):
+        tab = CompanionsTab()
+        pet = _make_pet(creature_id="^CAT", custom_name="Fluffy", trust=0.8, scale=1.6)
+        tab.set_data({"Pets": [pet]})
+        tab._list.setCurrentRow(0)
+        assert tab._companion_info_table.rowCount() >= 2
+        assert "Fluffy" in tab._companion_info_table.item(0, 0).text()
 
 
 class TestDescriptorsOverflow:

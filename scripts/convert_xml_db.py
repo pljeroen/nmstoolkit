@@ -2,11 +2,13 @@
 """One-time conversion: old editor XML databases → JSON for Stellar Edit."""
 
 import json
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-OLD_DB = Path("/home/jeroen/dev/NMSSaveEditor/NMSSaveEditor/nomanssave/db")
-OUT_DIR = Path("/home/jeroen/dev/stellar-edit/src/nms_save_editor/data")
+OLD_DB = Path(os.environ.get("NMS_OLD_DB_DIR", "legacy_db"))
+OUT_DIR = Path(os.environ.get("NMS_OUT_DATA_DIR", "src/nmstoolkit/data"))
+TEMPLATE_SRC = Path(os.environ.get("NMS_OLD_TEMPLATE_DIR", "legacy_templates"))
 
 
 def convert_items():
@@ -103,7 +105,7 @@ def copy_key_maps():
 
 def copy_templates():
     """Copy JSON templates from old editor."""
-    tmpl_src = Path("/home/jeroen/dev/NMSSaveEditor/NMSSaveEditor/nomanssave/templates")
+    tmpl_src = TEMPLATE_SRC
     tmpl_dst = OUT_DIR / "templates"
     tmpl_dst.mkdir(exist_ok=True)
     for src_file in tmpl_src.glob("*.json"):

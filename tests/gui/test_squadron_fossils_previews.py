@@ -56,8 +56,8 @@ def test_fossils_preview_tab_and_selection_updates(monkeypatch):
         lambda fid: "models/planets/biomes/common/buildings/parts/buildableparts/decoration/fossils/biped.scene.mbin",
     )
     tab = FossilsTab()
-    labels = [tab._tabs.tabText(i) for i in range(tab._tabs.count())]
-    assert "Preview" in labels
+    assert hasattr(tab, "_preview_panel")
+    assert tab._preview_panel.parentWidget() is not None
     tab.set_data(
         {
             "Inventory": {

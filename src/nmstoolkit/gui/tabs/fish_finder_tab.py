@@ -47,6 +47,15 @@ _FISH_CREATURE_TYPES = [
     {"id": "^FIENDFISHSMALL", "name": "Small Fiend Fish", "biome": "Hostile/Deep water", "notes": "Small aggressive aquatic predator"},
 ]
 
+# Creature category IDs are not inventory item IDs, so map them to
+# representative fish loot items that have real extracted icons.
+_FISH_CREATURE_ICON_ID = {
+    "^FISH": "^ANY_FISH",
+    "^JELLYFISH": "^F_BOSS_JELLY",
+    "^FIENDFISHBIG": "^FIENDCORE",
+    "^FIENDFISHSMALL": "^FIENDCORE",
+}
+
 # Stat IDs related to fishing
 _FISH_STAT_IDS = {
     "^FISH_KILLS": "Fish Caught",
@@ -126,10 +135,17 @@ class FishFinderTab(QWidget):
         """Create a table item with icon and ID tooltip."""
         twi = QTableWidgetItem(display_text)
         twi.setToolTip(item_id)
-        pixmap = get_item_icon(item_id)
+        icon_id = _FISH_CREATURE_ICON_ID.get(item_id, item_id)
+        pixmap = get_item_icon(icon_id)
         if pixmap is not None:
             twi.setIcon(QIcon(pixmap))
         return twi
+
+    def refresh_icons(self):
+        """Rebuild fish tables so newly loaded icon providers are applied."""
+        self._populate_bait_table()
+        self._populate_creatures_table()
+        self._populate_fish_table()
 
     def _populate_bait_table(self):
         self._bait_table.setRowCount(len(_FISH_BAIT_INFO))

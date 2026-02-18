@@ -166,14 +166,14 @@ class RecipeFinderTab(QWidget):
                 ing_ids.append(ing_id)
 
             ing_text = " + ".join(ing_parts)
-            ing_item = QTableWidgetItem(ing_text)
+            ing_item = QTableWidgetItem("")
             ing_item.setToolTip(" + ".join(ing_ids))
-            # Use first ingredient's icon
-            if ing_ids:
-                pixmap = get_item_icon(ing_ids[0])
-                if pixmap is not None:
-                    ing_item.setIcon(QIcon(pixmap))
+            ing_item.setData(Qt.UserRole, ing_text)
             self._table.setItem(row, 1, ing_item)
+            self._table.setCellWidget(
+                row, 1, self._build_ingredients_widget(ingredients)
+            )
+            self._table.setRowHeight(row, max(self._table.rowHeight(row), 24))
 
             # Type column
             recipe_type = "Cooking" if recipe.get("cooking") else "Refining"
@@ -187,6 +187,35 @@ class RecipeFinderTab(QWidget):
 
         self._table.setSortingEnabled(True)
         self._count_label.setText(f"{len(recipes)} recipes")
+
+    def _build_ingredients_widget(self, ingredients):
+        """Create a compact inline icon+name list for all ingredients."""
+        holder = QWidget(self._table)
+        layout = QHBoxLayout()
+        holder.setLayout(layout)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+        for idx, ing in enumerate(ingredients):
+            ing_id = ing.get("id", "")
+            ing_amt = ing.get("amount", 1)
+            icon = QLabel(holder)
+            pixmap = get_item_icon(ing_id, size=16)
+            if pixmap is not None:
+                icon.setPixmap(pixmap)
+            icon.setToolTip(ing_id)
+            layout.addWidget(icon)
+
+            name = QLabel(_format_item(ing_id, ing_amt), holder)
+            name.setWordWrap(False)
+            name.setToolTip(ing_id)
+            layout.addWidget(name)
+
+            if idx < len(ingredients) - 1:
+                sep = QLabel("+", holder)
+                sep.setStyleSheet("color: #888;")
+                layout.addWidget(sep)
+        layout.addStretch(1)
+        return holder
 
     def _populate_fallback_table(self):
         """Fallback: show food items from items.json when no recipe data."""
@@ -225,6 +254,13 @@ class RecipeFinderTab(QWidget):
         else:
             self._note.setVisible(True)
             self._populate_fallback_table()
+
+    def refresh_icons(self):
+        """Rebuild visible rows so real icons are used after provider load."""
+        if self._all_recipes:
+            self._apply_filter()
+            return
+        self._populate_fallback_table()
 
     def _apply_filter(self):
         search = self._search_edit.text().lower().strip()

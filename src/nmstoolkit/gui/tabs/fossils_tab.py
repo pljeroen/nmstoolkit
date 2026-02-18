@@ -9,13 +9,13 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 from typing import Optional
 
 from nmstoolkit.gui.preview_support import (
+    configure_preview_view,
     PreviewLoadThread,
     load_template_preview_meshes,
     resolve_fossil_scene,
@@ -137,12 +137,8 @@ class FossilsTab(QWidget):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        root_layout = QVBoxLayout(self)
-        self._tabs = QTabWidget()
-        root_layout.addWidget(self._tabs)
-
-        data_tab = QWidget()
-        layout = QHBoxLayout(data_tab)
+        root_layout = QHBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
 
         # Left: Fossil pieces in inventories
         pieces_group = QGroupBox("Fossil Pieces (Inventories)")
@@ -160,29 +156,10 @@ class FossilsTab(QWidget):
         self._pieces_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._pieces_table.itemSelectionChanged.connect(self._on_piece_selected)
         pieces_layout.addWidget(self._pieces_table)
+        root_layout.addWidget(pieces_group, 3)
 
-        # Right: Fossil displays in bases
-        displays_group = QGroupBox("Fossil Displays (Bases)")
-        displays_layout = QVBoxLayout(displays_group)
-        self._displays_label = QLabel("No save loaded")
-        displays_layout.addWidget(self._displays_label)
-
-        self._displays_table = QTableWidget(0, 3)
-        self._displays_table.setHorizontalHeaderLabels(["Display", "Category", "Base"])
-        self._displays_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._displays_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._displays_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._displays_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._displays_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._displays_table.itemSelectionChanged.connect(self._on_display_selected)
-        displays_layout.addWidget(self._displays_table)
-
-        layout.addWidget(pieces_group)
-        layout.addWidget(displays_group)
-        self._tabs.addTab(data_tab, "Overview")
-
-        self._preview_tab = QWidget()
-        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_panel = QWidget()
+        preview_layout = QVBoxLayout(self._preview_panel)
         self._preview_identity = QLabel("Item: —\nResource: —")
         self._preview_identity.setWordWrap(True)
         self._preview_fidelity = QLabel(
@@ -202,7 +179,42 @@ class FossilsTab(QWidget):
         preview_layout.addWidget(self._preview_status)
         preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
-        self._tabs.addTab(self._preview_tab, "Preview")
+        root_layout.addWidget(self._preview_panel, 4)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_panel.setMaximumWidth(520)
+
+        # Right: Fossil displays in bases
+        displays_group = QGroupBox("Fossil Displays (Bases)")
+        displays_layout = QVBoxLayout(displays_group)
+        self._displays_label = QLabel("No save loaded")
+        displays_layout.addWidget(self._displays_label)
+
+        self._displays_table = QTableWidget(0, 3)
+        self._displays_table.setHorizontalHeaderLabels(["Display", "Category", "Base"])
+        self._displays_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._displays_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._displays_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._displays_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._displays_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._displays_table.itemSelectionChanged.connect(self._on_display_selected)
+        displays_layout.addWidget(self._displays_table)
+        right_layout.addWidget(displays_group, 1)
+
+        info_group = QGroupBox("Selection Info")
+        info_layout = QVBoxLayout(info_group)
+        self._fossil_info_table = QTableWidget(0, 4)
+        self._fossil_info_table.setHorizontalHeaderLabels(["Name", "Type", "Class", "Value"])
+        self._fossil_info_table.verticalHeader().setVisible(False)
+        for col in range(4):
+            self._fossil_info_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self._fossil_info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._fossil_info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        info_layout.addWidget(self._fossil_info_table)
+        right_layout.addWidget(info_group, 0)
+        root_layout.addWidget(right_panel, 3)
 
     def set_data(self, psd: dict) -> None:
         """Load fossil data from player state data."""
@@ -266,8 +278,16 @@ class FossilsTab(QWidget):
         if not items:
             return
         row = items[0].row()
-        cell = self._pieces_table.item(row, 0)
-        fossil_id = cell.data(Qt.ItemDataRole.UserRole) if cell else ""
+        item_cell = self._pieces_table.item(row, 0)
+        category_cell = self._pieces_table.item(row, 1)
+        qty_cell = self._pieces_table.item(row, 3)
+        fossil_id = item_cell.data(Qt.ItemDataRole.UserRole) if item_cell else ""
+        self._update_fossil_info(
+            item_cell.text() if item_cell else "—",
+            category_cell.text() if category_cell else "—",
+            "Piece",
+            qty_cell.text() if qty_cell else "—",
+        )
         self._update_preview(str(fossil_id or ""), "piece")
 
     def _on_display_selected(self) -> None:
@@ -275,9 +295,24 @@ class FossilsTab(QWidget):
         if not items:
             return
         row = items[0].row()
-        cell = self._displays_table.item(row, 0)
-        fossil_id = cell.data(Qt.ItemDataRole.UserRole) if cell else ""
+        item_cell = self._displays_table.item(row, 0)
+        category_cell = self._displays_table.item(row, 1)
+        base_cell = self._displays_table.item(row, 2)
+        fossil_id = item_cell.data(Qt.ItemDataRole.UserRole) if item_cell else ""
+        self._update_fossil_info(
+            item_cell.text() if item_cell else "—",
+            category_cell.text() if category_cell else "—",
+            "Display",
+            base_cell.text() if base_cell else "—",
+        )
         self._update_preview(str(fossil_id or ""), "display")
+
+    def _update_fossil_info(self, name: str, category: str, source_type: str, value: str) -> None:
+        self._fossil_info_table.setRowCount(1)
+        self._fossil_info_table.setItem(0, 0, QTableWidgetItem(name))
+        self._fossil_info_table.setItem(0, 1, QTableWidgetItem(category))
+        self._fossil_info_table.setItem(0, 2, QTableWidgetItem(source_type))
+        self._fossil_info_table.setItem(0, 3, QTableWidgetItem(value))
 
     def _ensure_preview_view(self) -> None:
         if self._preview_view is not None:
@@ -287,12 +322,9 @@ class FossilsTab(QWidget):
         except Exception:
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
-        self._preview_view = Corvette3DView(self._preview_tab)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
-        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_view = Corvette3DView(self._preview_panel)
+        configure_preview_view(self._preview_view)
+        self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()
 

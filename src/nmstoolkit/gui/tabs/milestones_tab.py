@@ -1,9 +1,14 @@
 """Milestones & Reputation editor tab."""
 
+import json
+
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHeaderView,
+    QHBoxLayout,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -299,6 +304,9 @@ class MilestonesTab(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        top_panel = QWidget()
+        top_layout = QHBoxLayout(top_panel)
+        top_layout.setContentsMargins(0, 0, 0, 0)
 
         # Reputation — from GLOBAL_STATS standing entries
         rep_group = QGroupBox("Race Reputation (from Stats)")
@@ -311,7 +319,7 @@ class MilestonesTab(QWidget):
             )
             rep_layout.addRow(f"{label}:", editor)
             self._rep_editors[stat_id] = editor
-        layout.addWidget(rep_group)
+        top_layout.addWidget(rep_group, 1)
 
         # Guild standing
         guild_group = QGroupBox("Guild Standing")
@@ -324,7 +332,18 @@ class MilestonesTab(QWidget):
             )
             guild_layout.addRow(f"{label}:", editor)
             self._guild_editors[stat_id] = editor
-        layout.addWidget(guild_group)
+        top_layout.addWidget(guild_group, 1)
+        layout.addWidget(top_panel)
+
+        action_row = QHBoxLayout()
+        self._export_btn = QPushButton("Export Stats")
+        self._export_btn.clicked.connect(self._on_export)
+        action_row.addWidget(self._export_btn)
+        self._import_btn = QPushButton("Import Stats")
+        self._import_btn.clicked.connect(self._on_import)
+        action_row.addWidget(self._import_btn)
+        action_row.addStretch()
+        layout.addLayout(action_row)
 
         # Stats table
         self._table = QTableWidget()
@@ -397,6 +416,51 @@ class MilestonesTab(QWidget):
                 val["IntValue"] = value
             else:
                 stat["Value"] = {"IntValue": value, "FloatValue": 0.0, "Denominator": 0}
+
+    def _on_export(self) -> None:
+        if self._data is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Backup Milestones Stats", "milestones_stats.json", "JSON files (*.json)"
+        )
+        if not path:
+            return
+        group = self._get_or_create_global_stats_group(self._data)
+        with open(path, "w") as f:
+            json.dump(group, f, indent=2)
+
+    def _on_import(self) -> None:
+        if self._data is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Restore Milestones Stats", "", "JSON files (*.json)"
+        )
+        if not path:
+            return
+        with open(path) as f:
+            imported = json.load(f)
+        stats = []
+        if isinstance(imported, dict):
+            candidate = imported.get("Stats", [])
+            stats = candidate if isinstance(candidate, list) else []
+        elif isinstance(imported, list):
+            stats = imported
+        group = self._get_or_create_global_stats_group(self._data)
+        group["Stats"] = stats
+        self.set_data(self._data)
+
+    @staticmethod
+    def _get_or_create_global_stats_group(psd: dict) -> dict:
+        stats_groups = psd.get("Stats")
+        if not isinstance(stats_groups, list):
+            stats_groups = []
+            psd["Stats"] = stats_groups
+        for group in stats_groups:
+            if isinstance(group, dict) and group.get("GroupId") == "^GLOBAL_STATS":
+                return group
+        group = {"GroupId": "^GLOBAL_STATS", "Stats": []}
+        stats_groups.append(group)
+        return group
 
     @staticmethod
     def _extract_global_stats(psd: dict) -> list:

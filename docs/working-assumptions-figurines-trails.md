@@ -128,7 +128,7 @@ Record game/MBINCompiler version used for extraction in the resulting audit arti
 ## Local extraction status (executed)
 
 Completed on this machine against:
-- `/home/jeroen/dev/NMS_GameFiles/No Man's Sky/GAMEDATA/PCBANKS`
+- `<NMS_GAME_DIR>/GAMEDATA/PCBANKS`
 - `MBINCompiler-linux` from `src/nmstoolkit/data/ExternalTools/MBINCompiler/`
 
 Artifact:

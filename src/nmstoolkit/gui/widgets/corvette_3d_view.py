@@ -535,8 +535,14 @@ class Corvette3DView(QOpenGLWidget):
         if self._show_grid:
             self._draw_grid(vp)
 
-        # Draw modules
-        light_dir = _normalize((0.5, 0.8, 0.6))
+        # Draw modules with a camera-relative key light so the viewed side is lit.
+        light_dir = _normalize(
+            (
+                eye[0] - self._cam_target[0],
+                eye[1] - self._cam_target[1],
+                eye[2] - self._cam_target[2],
+            )
+        )
 
         GL.glUseProgram(self._shader_program)
         loc_mvp = GL.glGetUniformLocation(self._shader_program, "uMVP")

@@ -1,14 +1,16 @@
 """Tests for HgpakAdapter — integration tests against real PAK files.
 
 Tests: R-PAK-02, R-PAK-04, R-PAK-05.
-Requires NMS game files at /media/sf_tdd/No Man's Sky/.
+Requires NMS game files via NMS_TEST_GAME_DIR env var.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
-GAME_DIR = Path("/media/sf_tdd/No Man's Sky")
+_game_dir = os.environ.get("NMS_TEST_GAME_DIR", "")
+GAME_DIR = Path(_game_dir) if _game_dir else Path("/nonexistent")
 PAK_DIR = GAME_DIR / "GAMEDATA" / "PCBANKS"
 GLOBALS_PAK = PAK_DIR / "NMSARC.globals.pak"
 

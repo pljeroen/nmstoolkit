@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- `[DOC]` Full documentation pass: refreshed stale handoff/context docs and removed machine-specific path exposure from docs.
+- `[DOC]` Added documentation tags and path-hygiene policy to README.
+- `[DOC]` Updated community post copy to avoid stale hard-coded project metrics.
+- `[DOC]` Replaced machine-specific absolute paths in integration tests/scripts with env-driven placeholders.
+- `[DOC]` Removed machine-specific default game directory fallback from extraction dialog startup state.
+
+### Fixed
+- `[GUI]` Recipes tab Ingredients column now renders multi-ingredient icon+name entries correctly without text overlay artifacts.
+- `[GUI]` Fish and Recipes tabs refresh icon rendering after icon provider initialization.
+
 ## [0.2.8-beta] - 2026-02-15
 
 ### Added

@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-848%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/architecture-hexagonal-purple.svg)]()
 [![Build](https://img.shields.io/github/actions/workflow/status/pljeroen/nmstoolkit/build-release.yml?label=build)](https://github.com/pljeroen/nmstoolkit/actions)
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
@@ -14,6 +14,12 @@
 > **The authors are not responsible for corrupted or lost save data.**
 
 No Man's Sky save editor and toolkit.
+
+## Documentation Tags
+
+The project uses compact tags in docs/changelog entries to make review scope clear:
+
+- `[DOC]` Documentation behavior or wording update
 
 ## Features
 
@@ -84,6 +90,12 @@ python3 -m pytest tests/ -q
 # Run with coverage
 python3 -m pytest tests/ --cov=nmstoolkit
 ```
+
+## Security and Path Hygiene
+
+- No save data is transmitted by the app.
+- Machine-specific absolute paths must never be hardcoded in source, docs, tests, or examples.
+- Use user-selected paths, runtime detection, or environment-variable placeholders in documentation.
 
 ---
 

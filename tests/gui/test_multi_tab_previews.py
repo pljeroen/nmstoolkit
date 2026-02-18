@@ -40,8 +40,8 @@ def test_frigates_preview_tab_and_identity_refresh(monkeypatch):
         FrigatesTab, "_load_preview_meshes", lambda self, r: ([], "no preview"), raising=False
     )
     tab = FrigatesTab()
-    labels = [tab._tabs.tabText(i) for i in range(tab._tabs.count())]
-    assert "Preview" in labels
+    assert hasattr(tab, "_preview_panel")
+    assert tab._preview_panel.parentWidget() is not None
 
     psd = {
         "FleetFrigates": [
@@ -147,8 +147,8 @@ def test_companions_preview_tab_and_identity_refresh(monkeypatch):
         CompanionsTab, "_load_preview_meshes", lambda self, r: ([], "no preview"), raising=False
     )
     tab = CompanionsTab()
-    labels = [tab._tabs.tabText(i) for i in range(tab._tabs.count())]
-    assert "Preview" in labels
+    assert hasattr(tab, "_preview_panel")
+    assert tab._preview_panel.parentWidget() is not None
 
     psd = {
         "Pets": [

@@ -44,6 +44,11 @@ class TestRecipeFinderTabLoad:
         tab.set_data(psd)
         assert tab._known_count_label.text() == "0 recipes unlocked"
 
+    def test_refresh_icons_method_exists(self, qapp):
+        tab = RecipeFinderTab()
+        assert hasattr(tab, "refresh_icons")
+        assert callable(tab.refresh_icons)
+
 
 class TestRecipeFinderSearch:
     def test_filter_narrows_results(self, qapp):
@@ -64,6 +69,22 @@ class TestRecipeFinderSearch:
         tab._search_edit.setText("")
         tab._apply_filter()
         assert tab._table.rowCount() == total_before
+
+    def test_multi_ingredient_row_uses_cell_widget(self, qapp):
+        tab = RecipeFinderTab()
+        tab._populate_recipe_table([
+            {
+                "result": {"id": "^FOOD_M_FISH", "amount": 1},
+                "ingredients": [
+                    {"id": "^FISHBAIT_1", "amount": 1},
+                    {"id": "^FISHBAIT_2", "amount": 2},
+                    {"id": "^FISHBAIT_3", "amount": 3},
+                ],
+                "cooking": True,
+                "time": 5.0,
+            }
+        ])
+        assert tab._table.cellWidget(0, 1) is not None
 
 
 class TestRecipeFinderUnlock:

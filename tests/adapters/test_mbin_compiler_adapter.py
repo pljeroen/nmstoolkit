@@ -4,12 +4,15 @@ Tests R-PIPE-01: Convert MBIN bytes to EXML string.
 Requires MBINCompiler binary and NMS game files.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
-MBIN_COMPILER = Path("/tmp/nms_exml/MBINCompiler")
-GAME_DIR = Path("/media/sf_tdd/No Man's Sky")
+_mbin_compiler = os.environ.get("NMS_TEST_MBIN_COMPILER", "")
+MBIN_COMPILER = Path(_mbin_compiler) if _mbin_compiler else Path("/nonexistent")
+_game_dir = os.environ.get("NMS_TEST_GAME_DIR", "")
+GAME_DIR = Path(_game_dir) if _game_dir else Path("/nonexistent")
 PAK_DIR = GAME_DIR / "GAMEDATA" / "PCBANKS"
 
 needs_mbin_compiler = pytest.mark.skipif(

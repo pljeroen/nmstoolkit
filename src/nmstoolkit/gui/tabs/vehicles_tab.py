@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui.preview_support import (
+    configure_preview_view,
     PreviewLoadThread,
     find_scene_resource_filename,
     load_template_preview_meshes,
@@ -214,10 +215,7 @@ class VehiclesTab(QWidget):
         self._preview_view = Corvette3DView(self._preview_panel)
         self._preview_view.setMinimumSize(0, 0)
         self._preview_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
+        configure_preview_view(self._preview_view)
         self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()

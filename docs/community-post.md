@@ -1,6 +1,6 @@
-# NMS Toolkit — No Man's Sky Save Editor, Built in a Day with Claude Code
+# NMS Toolkit — No Man's Sky Save Editor
 
-Full desktop save editor for No Man's Sky — 20 editor tabs, 630 tests, 21K lines of Python, built from scratch in one day.
+Full desktop save editor for No Man's Sky with broad tab coverage, automated tests, and continuous iteration.
 
 **GitHub**: https://github.com/pljeroen/nmstoolkit (MIT, free, open source)
 **Download**: Windows .exe on the Releases page — no install required
@@ -9,9 +9,9 @@ Full desktop save editor for No Man's Sky — 20 editor tabs, 630 tests, 21K lin
 
 Visual editor for NMS save files: inventories (exosuit/ships/multitools/freighter/vehicles) with drag-and-drop, ship/multitool/companion management with cross-save vault, 3D corvette builder rendering actual game meshes via OpenGL, settlement editor, base library with budget tracking and export/import, expedition tools with offline replay, discovery browser with constellation path optimizer, galaxy atlas HTML export, and more.
 
-## How Claude Helped
+## Development Notes
 
-I directed architecture and features. Claude Code wrote every line — source, tests, widgets. The harder wins: reverse-engineering the NMS save format (LZ4 blocks, obfuscated keys, binary geometry parsing), building an OpenGL 3.3 mesh renderer from PAK-extracted models, and a nearest-neighbor + 2-opt path optimizer that cuts constellation travel distance by 91%.
+Architecture and feature direction are user-led. AI tooling accelerates implementation, testing, and refactors. Key technical areas include reverse-engineering save/asset formats, OpenGL rendering from extracted meshes, and path optimization for constellation editing.
 
 ## Tech
 

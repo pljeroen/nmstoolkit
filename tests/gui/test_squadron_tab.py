@@ -26,6 +26,7 @@ def _make_player_ship(
     filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
     inv_class="A",
     damage=120.0,
+    shield=0.0,
     seed="0x1234",
     tech_slots=None,
 ):
@@ -40,7 +41,10 @@ def _make_player_ship(
             "Class": {"InventoryClass": inv_class},
             "Width": 10,
             "Height": 5,
-            "BaseStatValues": [{"BaseStatID": "^SHIP_DAMAGE", "Value": damage}],
+            "BaseStatValues": [
+                {"BaseStatID": "^SHIP_DAMAGE", "Value": damage},
+                {"BaseStatID": "^SHIP_SHIELD", "Value": shield},
+            ],
         },
         "Inventory_TechOnly": {"Slots": tech_slots, "ValidSlotIndices": [], "Width": 10, "Height": 6},
         "Inventory_Cargo": {"Slots": [], "ValidSlotIndices": [], "Width": 8, "Height": 5},
@@ -168,18 +172,29 @@ class TestSquadronTabBasics:
             "SquadronPilots": [_make_pilot(ship_filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN")],
             "SquadronUnlockedPilotSlots": [0],
             "ShipOwnership": [
-                _make_player_ship("Alpha Fighter", "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN", inv_class="S", damage=250.0),
+                _make_player_ship(
+                    "Alpha Fighter",
+                    "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
+                    inv_class="S",
+                    damage=250.0,
+                    shield=73.0,
+                ),
             ],
         }
         tab = SquadronTab()
         tab.set_data(psd)
         tab._list.setCurrentRow(0)
-        assert hasattr(tab, "_ship_specs_table")
-        assert tab._ship_specs_table.rowCount() >= 4
-        class_item = tab._ship_specs_table.item(2, 1)
-        dps_item = tab._ship_specs_table.item(3, 1)
+        assert hasattr(tab, "_ship_info_table")
+        assert tab._ship_info_table.columnCount() == 4
+        headers = [tab._ship_info_table.horizontalHeaderItem(i).text() for i in range(4)]
+        assert headers == ["Name", "Type", "Class", "Value"]
+        assert tab._ship_info_table.rowCount() >= 2
+        class_item = tab._ship_info_table.item(0, 2)
+        dps_item = tab._ship_info_table.item(0, 3)
+        shield_item = tab._ship_info_table.item(1, 3)
         assert class_item is not None and "S" in class_item.text()
-        assert dps_item is not None and "250" in dps_item.text()
+        assert dps_item is not None and "250 DPS" in dps_item.text()
+        assert shield_item is not None and "73" in shield_item.text()
 
     def test_ship_specs_panel_lists_modules_with_tooltips(self):
         from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
@@ -202,9 +217,9 @@ class TestSquadronTabBasics:
         tab = SquadronTab()
         tab.set_data(psd)
         tab._list.setCurrentRow(0)
-        assert hasattr(tab, "_ship_modules_table")
-        assert tab._ship_modules_table.rowCount() == 1
-        module_item = tab._ship_modules_table.item(0, 0)
+        assert hasattr(tab, "_ship_info_table")
+        assert tab._ship_info_table.rowCount() == 2
+        module_item = tab._ship_info_table.item(1, 0)
         assert module_item is not None
         assert "shield" in module_item.text().lower()
         assert module_item.toolTip()

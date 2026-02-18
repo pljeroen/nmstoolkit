@@ -6,18 +6,22 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QProgressBar,
-    QTabWidget,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
 from nmstoolkit.gui.preview_support import (
+    configure_preview_view,
     PreviewLoadThread,
     find_scene_resource_filename,
     load_template_preview_meshes,
@@ -125,13 +129,18 @@ class FrigatesTab(QWidget):
         left_layout.addWidget(self._list)
         layout.addWidget(left)
 
-        # Right: details and preview tabs
-        self._tabs = QTabWidget()
-        general_tab = QWidget()
-        right_layout = QVBoxLayout(general_tab)
+        content_panel = QWidget()
+        content_layout = QHBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
 
-        details = QGroupBox("Frigate Details")
-        det_layout = QFormLayout(details)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_panel.setMaximumWidth(520)
+        self._details_group = QGroupBox("Frigate Details")
+        self._details_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._details_group.setMaximumWidth(360)
+        det_layout = QFormLayout(self._details_group)
 
         self._name_edit = QLineEdit()
         self._name_edit.editingFinished.connect(self._on_name_changed)
@@ -159,7 +168,49 @@ class FrigatesTab(QWidget):
         self._damaged_editor.value_changed.connect(self._on_damaged_changed)
         det_layout.addRow("Times Damaged:", self._damaged_editor)
 
-        right_layout.addWidget(details)
+        left_layout.addWidget(self._details_group, 0)
+
+        info_group = QGroupBox("Frigate Info")
+        info_layout = QVBoxLayout(info_group)
+        self._frigate_info_table = QTableWidget(0, 4)
+        self._frigate_info_table.setHorizontalHeaderLabels(["Name", "Type", "Class", "Value"])
+        self._frigate_info_table.verticalHeader().setVisible(False)
+        for col in range(4):
+            self._frigate_info_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self._frigate_info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._frigate_info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        info_layout.addWidget(self._frigate_info_table)
+        left_layout.addWidget(info_group, 1)
+
+        content_layout.addWidget(left_panel, 3)
+
+        self._preview_panel = QWidget()
+        preview_layout = QVBoxLayout(self._preview_panel)
+        self._preview_identity = QLabel("Seed: —\nResource: —")
+        self._preview_identity.setWordWrap(True)
+        self._preview_fidelity = QLabel(
+            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
+        )
+        self._preview_fidelity.setWordWrap(True)
+        self._preview_status = QLabel("Preview: select a frigate")
+        self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
+        self._preview_placeholder = QLabel("3D preview will appear here")
+        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setStyleSheet("color: #aaa;")
+        preview_layout.addWidget(self._preview_identity)
+        preview_layout.addWidget(self._preview_fidelity)
+        preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
+        preview_layout.addWidget(self._preview_placeholder, 1)
+        content_layout.addWidget(self._preview_panel, 4)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_panel.setMaximumWidth(520)
 
         # Stats (editable)
         stats_group = QGroupBox("Stats")
@@ -181,34 +232,8 @@ class FrigatesTab(QWidget):
         self._traits_label.setWordWrap(True)
         traits_layout.addWidget(self._traits_label)
         right_layout.addWidget(traits_group)
-
-        right_layout.addStretch()
-        self._tabs.addTab(general_tab, "General")
-
-        self._preview_tab = QWidget()
-        preview_layout = QVBoxLayout(self._preview_tab)
-        self._preview_identity = QLabel("Seed: —\nResource: —")
-        self._preview_identity.setWordWrap(True)
-        self._preview_fidelity = QLabel(
-            "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
-        )
-        self._preview_fidelity.setWordWrap(True)
-        self._preview_status = QLabel("Preview: select a frigate")
-        self._preview_status.setWordWrap(True)
-        self._preview_progress = QProgressBar()
-        self._preview_progress.setRange(0, 0)
-        self._preview_progress.setVisible(False)
-        self._preview_placeholder = QLabel("3D preview will appear here")
-        self._preview_placeholder.setMinimumHeight(280)
-        self._preview_placeholder.setStyleSheet("color: #aaa;")
-        preview_layout.addWidget(self._preview_identity)
-        preview_layout.addWidget(self._preview_fidelity)
-        preview_layout.addWidget(self._preview_status)
-        preview_layout.addWidget(self._preview_progress)
-        preview_layout.addWidget(self._preview_placeholder, 1)
-        self._tabs.addTab(self._preview_tab, "Preview")
-        self._tabs.currentChanged.connect(self._on_tab_changed)
-        layout.addWidget(self._tabs)
+        content_layout.addWidget(right_panel, 3)
+        layout.addWidget(content_panel)
 
     def set_data(self, psd: dict):
         self._data = psd
@@ -295,18 +320,9 @@ class FrigatesTab(QWidget):
                 friendly = _TRAIT_FRIENDLY.get(raw, raw)
                 active_traits.append(friendly)
         self._traits_label.setText(", ".join(active_traits) if active_traits else "None")
-        if self._tabs.currentWidget() is self._preview_tab:
-            self._update_preview(frigate)
-        else:
-            self._preview_progress.setVisible(False)
-            self._preview_status.setText("Open the Preview tab to load frigate model.")
-
-    def _on_tab_changed(self, _index: int) -> None:
-        if self._tabs.currentWidget() is not self._preview_tab:
-            return
-        frigate = self._current_frigate()
-        if frigate is not None:
-            self._update_preview(frigate)
+        self._update_info_table(frigate)
+        self._refresh_preview_identity(frigate)
+        self._update_preview(frigate)
 
     def _current_frigate(self):
         if self._current_index < 0 or self._current_index >= len(self._frigates):
@@ -333,6 +349,7 @@ class FrigatesTab(QWidget):
         elif category == "special":
             prefix = "[Special] "
         self._list.item(i).setText(f"{prefix}{name} ({fc_display} {class_str})")
+        self._update_info_table(frigate)
 
     def _on_class_changed(self, text):
         frigate = self._current_frigate()
@@ -343,16 +360,19 @@ class FrigatesTab(QWidget):
             inv_class["InventoryClass"] = text
         else:
             frigate["InventoryClass"] = {"InventoryClass": text}
+        self._update_info_table(frigate)
 
     def _on_expeditions_changed(self, val):
         frigate = self._current_frigate()
         if frigate is not None:
             frigate["TotalNumberOfExpeditions"] = val
+            self._update_info_table(frigate)
 
     def _on_damaged_changed(self, val):
         frigate = self._current_frigate()
         if frigate is not None:
             frigate["NumberOfTimesDamaged"] = val
+            self._update_info_table(frigate)
 
     def _on_stat_changed(self, stat_index, value):
         frigate = self._current_frigate()
@@ -364,6 +384,27 @@ class FrigatesTab(QWidget):
                 stats.append(0)
             stats[stat_index] = value
             frigate["Stats"] = stats
+            self._update_info_table(frigate)
+
+    def _update_info_table(self, frigate: dict) -> None:
+        fc = frigate.get("FrigateClass", {})
+        fc_str = fc.get("FrigateClass", "—") if isinstance(fc, dict) else str(fc)
+        inv_class = frigate.get("InventoryClass", {})
+        class_str = inv_class.get("InventoryClass", "—") if isinstance(inv_class, dict) else "—"
+        name = frigate.get("CustomName", "") or "Frigate"
+        self._frigate_info_table.setRowCount(0)
+        self._frigate_info_table.insertRow(0)
+        self._frigate_info_table.setItem(0, 0, QTableWidgetItem(name))
+        self._frigate_info_table.setItem(0, 1, QTableWidgetItem(_CLASS_NAMES.get(fc_str, fc_str)))
+        self._frigate_info_table.setItem(0, 2, QTableWidgetItem(class_str))
+        self._frigate_info_table.setItem(0, 3, QTableWidgetItem(f"Exp {frigate.get('TotalNumberOfExpeditions', 0)}"))
+        stats = frigate.get("Stats", [])
+        if isinstance(stats, list) and stats:
+            self._frigate_info_table.insertRow(1)
+            self._frigate_info_table.setItem(1, 0, QTableWidgetItem("Combat"))
+            self._frigate_info_table.setItem(1, 1, QTableWidgetItem("Stat"))
+            self._frigate_info_table.setItem(1, 2, QTableWidgetItem("—"))
+            self._frigate_info_table.setItem(1, 3, QTableWidgetItem(str(stats[0])))
 
     def _ensure_preview_view(self) -> None:
         if self._preview_view is not None:
@@ -373,19 +414,16 @@ class FrigatesTab(QWidget):
         except Exception:
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
-        self._preview_view = Corvette3DView(self._preview_tab)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
-        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_view = Corvette3DView(self._preview_panel)
+        configure_preview_view(self._preview_view)
+        self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()
 
     def _load_preview_meshes(self, resource_filename: str):
         return load_template_preview_meshes(resource_filename)
 
-    def _update_preview(self, frigate: dict) -> None:
+    def _refresh_preview_identity(self, frigate: dict) -> None:
         resource = find_scene_resource_filename(frigate)
         if not resource:
             fc = frigate.get("FrigateClass", {})
@@ -402,6 +440,14 @@ class FrigatesTab(QWidget):
         self._preview_fidelity.setText(
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
+
+    def _update_preview(self, frigate: dict) -> None:
+        resource = find_scene_resource_filename(frigate)
+        if not resource:
+            fc = frigate.get("FrigateClass", {})
+            fc_str = fc.get("FrigateClass", "") if isinstance(fc, dict) else str(fc)
+            resource = resolve_frigate_scene(fc_str)
+        self._refresh_preview_identity(frigate)
         if not resource:
             self._preview_progress.setVisible(False)
             self._preview_status.setText("Preview unavailable: frigate resource filename missing.")

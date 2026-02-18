@@ -24,6 +24,11 @@ from PySide6.QtWidgets import (
 from nmstoolkit.backup import create_backup
 from nmstoolkit.core.icon_cache import IconCache
 from nmstoolkit.core.icon_extractor import IconExtractor
+from nmstoolkit.core.extraction_cache import (
+    fingerprint_from_files,
+    is_scheme_fresh,
+    update_scheme,
+)
 from nmstoolkit.paths import (
     cache_icons_dir,
     cache_meshes_dir,
@@ -61,6 +66,10 @@ ACCOUNT_KEY_MAP_PATH = DATA_DIR / "jsonmapac.txt"
 def _user_cache_dir() -> Path:
     """Return writable icon cache directory."""
     return cache_icons_dir()
+
+
+def _extraction_manifest_path() -> Path:
+    return _user_cache_dir() / "extraction_manifest.json"
 
 
 def _external_tools_dir() -> Path:
@@ -155,6 +164,7 @@ class MainWindow(QMainWindow):
         """Complete heavy startup work after first paint."""
         self._build_ui()
         self._auto_load_icons()
+        self._auto_refresh_game_data_if_stale()
         self._scan_saves()
         self._startup_ready = True
         self.statusBar().showMessage("Ready")
@@ -395,12 +405,56 @@ class MainWindow(QMainWindow):
 
         provider = IconProvider(icon_cache, catalogue, icon_map=icon_map)
         set_icon_provider(provider)
+        self._recipe_finder_tab.refresh_icons()
+        self._fish_finder_tab.refresh_icons()
+
+    def _resolve_game_and_pak_paths(self, selected_dir: Path) -> tuple[Path, Path] | tuple[None, None]:
+        """Normalize selected game directory into (game_root, pcbanks)."""
+        game_path = selected_dir
+        pak_dir = game_path / "GAMEDATA" / "PCBANKS"
+        if pak_dir.exists():
+            return game_path, pak_dir
+        if (game_path / "PCBANKS").exists():
+            return game_path.parent, game_path / "PCBANKS"
+        if game_path.name.upper() == "PCBANKS":
+            return game_path.parent.parent, game_path
+        if (game_path / "NMSARC.TexUI.pak").exists():
+            return game_path.parent.parent, game_path
+        return None, None
+
+    def _icons_catalogue_fingerprint(self, pak_dir: Path, mbin_compiler: Path | None) -> str:
+        files = [
+            pak_dir / "NMSARC.TexUI.pak",
+            pak_dir / "NMSARC.Precache.pak",
+            pak_dir / "NMSARC.MetadataEtc.pak",
+        ]
+        if mbin_compiler is not None:
+            files.append(mbin_compiler)
+        return fingerprint_from_files(files, extra={"scheme": "icons_catalogue"})
+
+    def _auto_refresh_game_data_if_stale(self) -> None:
+        """Refresh extracted game data automatically when game files changed."""
+        game_dir = self._settings.value("game_dir", "")
+        if not game_dir:
+            return
+        game_path, pak_dir = self._resolve_game_and_pak_paths(Path(game_dir))
+        if game_path is None or pak_dir is None:
+            return
+        cache_dir = _user_cache_dir()
+        if not (cache_dir / "game_catalogue.json").exists():
+            return
+        mbin_compiler = self._find_mbin_compiler(pak_dir)
+        fingerprint = self._icons_catalogue_fingerprint(pak_dir, mbin_compiler)
+        if is_scheme_fresh(_extraction_manifest_path(), "icons_catalogue", fingerprint):
+            return
+        if mbin_compiler is None:
+            return
+        self.statusBar().showMessage("Game update detected. Refreshing extracted data cache...")
+        self._extract_icons_for_paths(game_path, pak_dir, interactive=False)
 
     def _on_extract_icons(self):
         """Extract game icons from PAK and build catalogue-based icon map."""
-        last_game_dir = self._settings.value(
-            "game_dir", "/media/sf_tdd/No Man's Sky"
-        )
+        last_game_dir = self._settings.value("game_dir", "")
         game_dir = QFileDialog.getExistingDirectory(
             self, "Select NMS Game Directory", last_game_dir
         )
@@ -408,62 +462,66 @@ class MainWindow(QMainWindow):
             return
 
         self._settings.setValue("game_dir", game_dir)
-        game_path = Path(game_dir)
+        game_path, pak_dir = self._resolve_game_and_pak_paths(Path(game_dir))
+        if game_path is None or pak_dir is None:
+            QMessageBox.warning(
+                self, "Game Data Not Found",
+                f"Could not find PCBANKS in:\n{game_dir}\n\n"
+                "Select the NMS install directory or the PCBANKS folder."
+            )
+            return
+        self._extract_icons_for_paths(game_path, pak_dir, interactive=True)
 
-        # Auto-detect pak_dir: user may have selected game root, GAMEDATA, or PCBANKS
-        pak_dir = game_path / "GAMEDATA" / "PCBANKS"
-        if not pak_dir.exists():
-            if (game_path / "PCBANKS").exists():
-                pak_dir = game_path / "PCBANKS"
-                game_path = game_path.parent  # fix game_path for IconExtractor
-            elif game_path.name.upper() == "PCBANKS":
-                pak_dir = game_path
-                game_path = game_path.parent.parent
-            elif (game_path / "NMSARC.TexUI.pak").exists():
-                pak_dir = game_path
-                game_path = game_path.parent.parent
+    def _extract_icons_for_paths(self, game_path: Path, pak_dir: Path, interactive: bool) -> bool:
+        """Extract icons + catalogue from resolved game and pak directories."""
 
         cache_dir = _user_cache_dir()
 
         # Check for MBINCompiler before extraction — offer download if missing
         pre_check = self._find_mbin_compiler(pak_dir)
         if pre_check is None:
-            answer = QMessageBox.question(
-                self, "MBINCompiler Required",
-                "MBINCompiler was not found. It is required for full icon matching "
-                "(without it, only ~750 items match instead of ~5700).\n\n"
-                "Download MBINCompiler now?",
-            )
-            if answer == QMessageBox.StandardButton.Yes:
-                from nmstoolkit.gui.dialogs.external_deps_dialog import ExternalDepsDialog
-                dialog = ExternalDepsDialog(
-                    external_tools_dir=_external_tools_dir(), parent=self,
+            if interactive:
+                answer = QMessageBox.question(
+                    self, "MBINCompiler Required",
+                    "MBINCompiler was not found. It is required for full icon matching "
+                    "(without it, only ~750 items match instead of ~5700).\n\n"
+                    "Download MBINCompiler now?",
                 )
-                dialog.exec()
-                # Re-check after dialog closes (user may have downloaded it)
-                self._find_mbin_compiler(pak_dir)
+                if answer == QMessageBox.StandardButton.Yes:
+                    from nmstoolkit.gui.dialogs.external_deps_dialog import ExternalDepsDialog
+                    dialog = ExternalDepsDialog(
+                        external_tools_dir=_external_tools_dir(), parent=self,
+                    )
+                    dialog.exec()
+                    # Re-check after dialog closes (user may have downloaded it)
+                    self._find_mbin_compiler(pak_dir)
+            else:
+                return False
 
         extractor = IconExtractor(game_path, cache_dir)
 
         progress = QProgressDialog("Extracting icon textures from PAK...", None, 0, 0, self)
         progress.setWindowTitle("Extract Game Icons")
         progress.setMinimumDuration(0)
-        progress.show()
-        QApplication.processEvents()
+        if interactive:
+            progress.show()
+            QApplication.processEvents()
 
         count = extractor.extract_all_icons()
 
         if count == 0:
             progress.close()
-            QMessageBox.warning(
-                self, "No Icons Found",
-                f"No icon textures found in:\n{game_path}\n\n"
-                "Check that the game directory contains GAMEDATA/PCBANKS/NMSARC.TexUI.pak"
-            )
-            return
+            if interactive:
+                QMessageBox.warning(
+                    self, "No Icons Found",
+                    f"No icon textures found in:\n{game_path}\n\n"
+                    "Check that the game directory contains GAMEDATA/PCBANKS/NMSARC.TexUI.pak"
+                )
+            return False
 
         progress.setLabelText(f"Building game catalogue ({count} icons extracted)...")
-        QApplication.processEvents()
+        if interactive:
+            QApplication.processEvents()
 
         # Build catalogue from EXML to get real DDS paths
         icon_map = {}
@@ -496,11 +554,12 @@ class MainWindow(QMainWindow):
 
             except Exception as e:
                 progress.close()
-                QMessageBox.warning(
-                    self, "Catalogue Build Failed",
-                    f"Icon textures extracted ({count}), but catalogue build failed:\n{e}\n\n"
-                    "Icons extracted but matching will be limited."
-                )
+                if interactive:
+                    QMessageBox.warning(
+                        self, "Catalogue Build Failed",
+                        f"Icon textures extracted ({count}), but catalogue build failed:\n{e}\n\n"
+                        "Icons extracted but matching will be limited."
+                    )
 
         # Fallback: fuzzy matching from items.json if catalogue failed
         if not icon_map:
@@ -523,16 +582,26 @@ class MainWindow(QMainWindow):
 
         # Refresh recipe tab with newly extracted catalogue data
         self._recipe_finder_tab.refresh_recipes()
+        self._fish_finder_tab.refresh_icons()
 
         if self._save_file:
             self._populate_tabs()
 
-        QMessageBox.information(
-            self, "Icons Extracted",
-            f"Extracted {count} icon textures.\n"
-            f"Mapped {len(icon_map)} items to icons.\n\n"
-            "Icons will load automatically on next startup."
+        fingerprint = self._icons_catalogue_fingerprint(pak_dir, mbin_compiler)
+        update_scheme(
+            _extraction_manifest_path(),
+            "icons_catalogue",
+            fingerprint,
+            meta={"game_path": str(game_path), "pak_dir": str(pak_dir)},
         )
+        if interactive:
+            QMessageBox.information(
+                self, "Icons Extracted",
+                f"Extracted {count} icon textures.\n"
+                f"Mapped {len(icon_map)} items to icons.\n\n"
+                "Icons will load automatically on next startup."
+            )
+        return True
 
     def _on_extract_corvette_models(self):
         """Extract corvette module 3D models from game PAK files."""
@@ -639,6 +708,18 @@ class MainWindow(QMainWindow):
                     count += 1
 
             progress.close()
+            mbin_compiler_for_fp = self._find_mbin_compiler(pak_dir)
+            fp = fingerprint_from_files(
+                [pak_dir / "NMSARC.Precache.pak", pak_dir / "NMSARC.EntitySceneMBIN.pak"]
+                + ([mbin_compiler_for_fp] if mbin_compiler_for_fp is not None else []),
+                extra={"scheme": "corvette_meshes"},
+            )
+            update_scheme(
+                _extraction_manifest_path(),
+                "corvette_meshes",
+                fp,
+                meta={"pak_dir": str(pak_dir)},
+            )
             QMessageBox.information(
                 self, "Models Extracted",
                 f"Extracted {count} corvette module meshes.\n"

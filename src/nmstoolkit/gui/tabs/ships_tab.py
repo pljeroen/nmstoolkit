@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nmstoolkit.gui.preview_support import PreviewLoadThread
+from nmstoolkit.gui.preview_support import PreviewLoadThread, configure_preview_view
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
@@ -531,10 +531,7 @@ class ShipsTab(QWidget):
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
         self._preview_view = Corvette3DView(self._preview_tab)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
+        configure_preview_view(self._preview_view)
         self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()

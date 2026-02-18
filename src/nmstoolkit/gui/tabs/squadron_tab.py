@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
-from nmstoolkit.gui.preview_support import load_template_preview_meshes
+from nmstoolkit.gui.preview_support import configure_preview_view, load_template_preview_meshes
 from nmstoolkit.gui.widgets.inventory_grid import get_item_display_name, get_item_icon
 
 _RANK_NAMES = {0: "Cadet", 1: "Ensign", 2: "Lieutenant", 3: "Commander", 4: "Captain"}
@@ -78,6 +78,10 @@ def _extract_ship_class(ship: dict) -> str:
 
 
 def _extract_ship_damage(ship: dict) -> float:
+    return _extract_ship_stat(ship, "^SHIP_DAMAGE")
+
+
+def _extract_ship_stat(ship: dict, stat_id: str) -> float:
     inventory = ship.get("Inventory", {}) if isinstance(ship, dict) else {}
     base_stats = inventory.get("BaseStatValues", []) if isinstance(inventory, dict) else []
     if not isinstance(base_stats, list):
@@ -85,7 +89,7 @@ def _extract_ship_damage(ship: dict) -> float:
     for stat in base_stats:
         if not isinstance(stat, dict):
             continue
-        if str(stat.get("BaseStatID", "")).upper() == "^SHIP_DAMAGE":
+        if str(stat.get("BaseStatID", "")).upper() == str(stat_id).upper():
             try:
                 return float(stat.get("Value", 0.0))
             except (TypeError, ValueError):
@@ -112,6 +116,15 @@ def _is_squadron_relevant_module(item_id: str) -> bool:
         k in uid
         for k in ("SHIELD", "SHLD", "PHOTON", "LASER", "BOLT", "ROCKET", "CANNON", "SHOT", "GUN", "WEAPON")
     )
+
+
+def _pretty_module_name(item_id: str) -> str:
+    display = get_item_display_name(item_id)
+    raw = str(item_id or "").lstrip("^")
+    if display and display.upper() != raw.upper():
+        return display
+    words = [w for w in raw.split("_") if w]
+    return " ".join(w.capitalize() for w in words) if words else raw
 
 
 class SquadronTab(QWidget):
@@ -177,30 +190,16 @@ class SquadronTab(QWidget):
         self._specs_group = QGroupBox("Ship Specs / DPS")
         self._specs_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         specs_layout = QVBoxLayout(self._specs_group)
-        self._ship_specs_table = QTableWidget(4, 2)
-        self._ship_specs_table.setHorizontalHeaderLabels(["Stat", "Value"])
-        self._ship_specs_table.verticalHeader().setVisible(False)
-        self._ship_specs_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._ship_specs_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._ship_specs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._ship_specs_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._ship_specs_table.setMaximumHeight(145)
-        self._ship_specs_table.setItem(0, 0, QTableWidgetItem("Name"))
-        self._ship_specs_table.setItem(1, 0, QTableWidgetItem("Type"))
-        self._ship_specs_table.setItem(2, 0, QTableWidgetItem("Class"))
-        self._ship_specs_table.setItem(3, 0, QTableWidgetItem("DPS"))
-        specs_layout.addWidget(self._ship_specs_table)
-
-        self._ship_modules_table = QTableWidget(0, 2)
-        self._ship_modules_table.setHorizontalHeaderLabels(["Module", "Role"])
-        self._ship_modules_table.verticalHeader().setVisible(False)
-        self._ship_modules_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._ship_modules_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._ship_modules_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._ship_modules_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._ship_modules_table.setMinimumHeight(100)
-        self._ship_modules_table.setMaximumHeight(220)
-        specs_layout.addWidget(self._ship_modules_table, 1)
+        self._ship_info_table = QTableWidget(0, 4)
+        self._ship_info_table.setHorizontalHeaderLabels(["Name", "Type", "Class", "Value"])
+        self._ship_info_table.verticalHeader().setVisible(False)
+        for col in range(4):
+            self._ship_info_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self._ship_info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._ship_info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self._ship_info_table.setMinimumHeight(170)
+        self._ship_info_table.setMaximumHeight(260)
+        specs_layout.addWidget(self._ship_info_table, 1)
         top_layout.addWidget(self._specs_group, 1)
 
         right_layout = QVBoxLayout()
@@ -378,24 +377,44 @@ class SquadronTab(QWidget):
             ship_type = _extract_ship_type(ship.get("Resource", {}))
             ship_class = _extract_ship_class(ship)
             damage = _extract_ship_damage(ship)
-            self._set_specs_row_value(0, name)
-            self._set_specs_row_value(1, ship_type)
-            self._set_specs_row_value(2, ship_class)
-            self._set_specs_row_value(3, f"{damage:.0f}" if damage else "—")
+            self._ship_info_table.setRowCount(1)
+            self._set_ship_info_cell(0, 0, name)
+            self._set_ship_info_cell(0, 1, ship_type)
+            self._set_ship_info_cell(0, 2, ship_class)
+            self._set_ship_info_cell(0, 3, f"{damage:.0f} DPS" if damage else "—")
+            self._append_stat_rows(ship)
             self._update_ship_modules(ship)
             return
         resource = ship_resource.get("Filename", "") if isinstance(ship_resource, dict) else ""
-        self._set_specs_row_value(0, "Unlinked ship")
-        self._set_specs_row_value(1, _extract_ship_type({"Filename": resource}))
-        self._set_specs_row_value(2, "—")
-        self._set_specs_row_value(3, "—")
-        self._ship_modules_table.setRowCount(0)
+        self._ship_info_table.setRowCount(1)
+        self._set_ship_info_cell(0, 0, "Unlinked ship")
+        self._set_ship_info_cell(0, 1, _extract_ship_type({"Filename": resource}))
+        self._set_ship_info_cell(0, 2, "—")
+        self._set_ship_info_cell(0, 3, "—")
 
-    def _set_specs_row_value(self, row: int, value: str) -> None:
-        self._ship_specs_table.setItem(row, 1, QTableWidgetItem(value))
+    def _set_ship_info_cell(self, row: int, col: int, value: str) -> None:
+        self._ship_info_table.setItem(row, col, QTableWidgetItem(value))
+
+    def _append_stat_rows(self, ship: dict) -> None:
+        stat_specs = [
+            ("Shield", "^SHIP_SHIELD", "DEF"),
+            ("Hyperdrive", "^SHIP_HYPERDRIVE", "LY"),
+            ("Maneuverability", "^SHIP_AGILE", "MAN"),
+        ]
+        for stat_name, stat_id, unit in stat_specs:
+            value = _extract_ship_stat(ship, stat_id)
+            if value <= 0:
+                continue
+            row = self._ship_info_table.rowCount()
+            self._ship_info_table.insertRow(row)
+            self._set_ship_info_cell(row, 0, stat_name)
+            self._set_ship_info_cell(row, 1, "Stat")
+            self._set_ship_info_cell(row, 2, "—")
+            self._set_ship_info_cell(row, 3, f"{value:.0f} {unit}".strip())
 
     def _update_ship_modules(self, ship: dict) -> None:
-        self._ship_modules_table.setRowCount(0)
+        base_rows = self._ship_info_table.rowCount()
+        self._ship_info_table.setRowCount(base_rows)
         tech_inventory = ship.get("Inventory_TechOnly", {}) if isinstance(ship, dict) else {}
         slots = tech_inventory.get("Slots", []) if isinstance(tech_inventory, dict) else []
         module_ids = []
@@ -411,16 +430,18 @@ class SquadronTab(QWidget):
                 continue
             module_ids.append(item_id)
         for item_id in module_ids[:24]:
-            label = get_item_display_name(item_id)
-            row = self._ship_modules_table.rowCount()
-            self._ship_modules_table.insertRow(row)
+            label = _pretty_module_name(item_id)
+            row = self._ship_info_table.rowCount()
+            self._ship_info_table.insertRow(row)
             item = QTableWidgetItem(label)
             icon = get_item_icon(item_id, size=20)
             if icon is not None:
                 item.setIcon(QIcon(icon))
             item.setToolTip(f"{label} ({item_id})")
-            self._ship_modules_table.setItem(row, 0, item)
-            self._ship_modules_table.setItem(row, 1, QTableWidgetItem(_combat_module_role(item_id)))
+            self._ship_info_table.setItem(row, 0, item)
+            self._ship_info_table.setItem(row, 1, QTableWidgetItem("Module"))
+            self._ship_info_table.setItem(row, 2, QTableWidgetItem(_combat_module_role(item_id)))
+            self._ship_info_table.setItem(row, 3, QTableWidgetItem("—"))
 
     def _ensure_preview_view(self) -> None:
         if self._preview_view is not None:
@@ -431,10 +452,7 @@ class SquadronTab(QWidget):
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
         self._preview_view = Corvette3DView(self._preview_panel)
-        if hasattr(self._preview_view, "set_grid_visible"):
-            self._preview_view.set_grid_visible(False)
-        if hasattr(self._preview_view, "set_layering_enabled"):
-            self._preview_view.set_layering_enabled(False)
+        configure_preview_view(self._preview_view)
         self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()

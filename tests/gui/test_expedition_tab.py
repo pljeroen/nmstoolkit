@@ -44,6 +44,10 @@ def tab():
 
 
 class TestExpeditionTab:
+    def test_has_two_pane_layout(self, tab):
+        assert hasattr(tab, "_left_panel")
+        assert hasattr(tab, "_right_panel")
+
     def test_set_data_populates_season_info(self, tab):
         tab.set_data(PSD, common_state=COMMON_STATE)
         text = tab._season_info.text()
