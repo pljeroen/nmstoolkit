@@ -14,7 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
 from nmstoolkit.core.geometry_parser import parse_geometry
+from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
 from nmstoolkit.core.mesh_data import MaterialData, Mesh, SceneMeshEntry, SceneNode, Transform
 from nmstoolkit.core.scene_parser import parse_scene
 
@@ -121,6 +123,117 @@ def collect_scene_meshes(
 
 
 # ---------------------------------------------------------------------------
+# Scene geometry ref listing (R-PU-01)
+# ---------------------------------------------------------------------------
+
+def list_geometry_refs(scene_exml: str) -> List[str]:
+    """Parse scene EXML and return all geometry references found in the tree.
+
+    Useful for determining which geometry files to extract from PAK archives
+    before calling extract_module().
+    """
+    scene_node = parse_scene(scene_exml)
+    entries = collect_scene_meshes(scene_node)
+    return [entry.geometry_ref for entry in entries]
+
+
+# ---------------------------------------------------------------------------
+# Multi-format geometry decoding (R-PU-04)
+# ---------------------------------------------------------------------------
+
+def _decode_geometry(
+    geo_ref: str,
+    geometry_data: Dict[str, bytes],
+    geometry_exml: Dict[str, Tuple[str, str]],
+    cache: Dict[str, List[Mesh]],
+) -> List[Mesh]:
+    """Decode geometry for a given reference, using format priority.
+
+    Priority: stream EXML → binary → AABB fallback.
+    Results are cached per geo_ref to avoid redundant decoding.
+    """
+    if geo_ref in cache:
+        return cache[geo_ref]
+
+    # Try stream EXML first (highest fidelity for modern .mbin.pc)
+    exml_pair = geometry_exml.get(geo_ref)
+    if exml_pair is not None:
+        geo_exml_str, stream_exml_str = exml_pair
+        if geo_exml_str and stream_exml_str:
+            try:
+                result = parse_geometry_stream_exml(geo_exml_str, stream_exml_str)
+                if result:
+                    cache[geo_ref] = result
+                    return result
+            except Exception:
+                pass
+
+    # Try binary geometry
+    raw = geometry_data.get(geo_ref)
+    if raw is not None:
+        try:
+            result = parse_geometry(raw)
+            if result:
+                cache[geo_ref] = result
+                return result
+        except Exception:
+            pass
+
+    # Try AABB fallback from geometry EXML
+    if exml_pair is not None:
+        geo_exml_str = exml_pair[0]
+        if geo_exml_str:
+            try:
+                result = parse_geometry_aabb_fallback(geo_exml_str)
+                if result:
+                    cache[geo_ref] = result
+                    return result
+            except Exception:
+                pass
+
+    cache[geo_ref] = []
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Transform baking (R-PU-01)
+# ---------------------------------------------------------------------------
+
+def _apply_world_matrix(mesh: Mesh, matrix: List[float]) -> Mesh:
+    """Bake a 4x4 column-major world matrix into mesh vertices and normals."""
+    # Extract 3x3 rotation+scale and translation from column-major matrix
+    m = matrix
+    vertices = []
+    for vx, vy, vz in mesh.vertices:
+        x = m[0] * vx + m[4] * vy + m[8] * vz + m[12]
+        y = m[1] * vx + m[5] * vy + m[9] * vz + m[13]
+        z = m[2] * vx + m[6] * vy + m[10] * vz + m[14]
+        vertices.append((x, y, z))
+
+    # Normal transform: use inverse-transpose of upper 3x3
+    # For uniform/non-shear transforms, the upper 3x3 works directly
+    # (normalize after to handle scale)
+    normals = []
+    for nx, ny, nz in mesh.normals:
+        x = m[0] * nx + m[4] * ny + m[8] * nz
+        y = m[1] * nx + m[5] * ny + m[9] * nz
+        z = m[2] * nx + m[6] * ny + m[10] * nz
+        length = math.sqrt(x * x + y * y + z * z)
+        if length > 1e-9:
+            x, y, z = x / length, y / length, z / length
+        else:
+            x, y, z = 0.0, 0.0, 1.0
+        normals.append((x, y, z))
+
+    return Mesh(
+        vertices=tuple(vertices),
+        normals=tuple(normals),
+        uvs=mesh.uvs,
+        indices=mesh.indices,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cache entry
 # ---------------------------------------------------------------------------
 
@@ -148,35 +261,50 @@ class CorvetteMeshPipeline:
         module_id: str,
         scene_exml: str,
         geometry_data: Dict[str, bytes],
+        geometry_exml: Optional[Dict[str, Tuple[str, str]]] = None,
     ) -> MeshCacheEntry:
-        """Extract meshes from parsed scene EXML and raw geometry binaries.
+        """Extract meshes from parsed scene EXML and geometry data.
 
         Walks the full scene tree to collect geometry from all nodes,
         not just the root. Each node's world transform is composed from
-        the scene hierarchy.
+        the scene hierarchy and baked into vertex positions.
+
+        Supports three geometry formats in priority order:
+        1. Stream EXML (geometry_exml has non-empty stream data)
+        2. Binary geometry (geometry_data has raw bytes)
+        3. AABB fallback (geometry_exml has geometry EXML with bounding boxes)
 
         Args:
             module_id: The corvette module ID (e.g. B_COK_A).
             scene_exml: EXML string of the module's SCENE.MBIN.
             geometry_data: Map of geometry path → raw binary data.
+            geometry_exml: Optional map of geometry path → (geo_exml, stream_exml)
+                tuple. geo_exml is the converted geometry EXML, stream_exml is
+                the converted stream data EXML (empty string if unavailable).
 
         Returns:
-            MeshCacheEntry with parsed meshes and world transforms.
+            MeshCacheEntry with parsed meshes (transforms baked into vertices).
         """
+        if geometry_exml is None:
+            geometry_exml = {}
+
         scene_node = parse_scene(scene_exml)
         entries = collect_scene_meshes(scene_node)
 
         meshes: List[Mesh] = []
         world_transforms: List[List[float]] = []
         geometry_ref = scene_node.geometry_ref or ""
+        decoded_cache: Dict[str, List[Mesh]] = {}
 
         for entry in entries:
-            if entry.geometry_ref in geometry_data:
-                raw = geometry_data[entry.geometry_ref]
-                submeshes = parse_geometry(raw)
-                for submesh in submeshes:
-                    meshes.append(submesh)
-                    world_transforms.append(list(entry.world_matrix))
+            ref = entry.geometry_ref
+            submeshes = _decode_geometry(
+                ref, geometry_data, geometry_exml, decoded_cache,
+            )
+            for submesh in submeshes:
+                baked = _apply_world_matrix(submesh, list(entry.world_matrix))
+                meshes.append(baked)
+                world_transforms.append(list(entry.world_matrix))
 
         result = MeshCacheEntry(
             module_id=module_id,

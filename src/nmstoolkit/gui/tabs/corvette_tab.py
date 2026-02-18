@@ -1,7 +1,6 @@
 """Corvette editor tab — list completed corvettes + active draft, with inventory editing."""
 
 from collections import Counter
-import math
 from pathlib import Path
 import shutil
 from typing import Dict, List, Optional
@@ -240,94 +239,6 @@ def _scene_candidates_for_module(module_id: str) -> list[str]:
 
 def _normalize_ref(path: str) -> str:
     return path.replace("\\", "/").lower()
-
-
-def _rotate_xyz(v: tuple[float, float, float], rot_deg: tuple[float, float, float]) -> tuple[float, float, float]:
-    """Rotate vector by Euler XYZ degrees."""
-    x, y, z = v
-    rx, ry, rz = (math.radians(rot_deg[0]), math.radians(rot_deg[1]), math.radians(rot_deg[2]))
-
-    cy, sy = math.cos(rx), math.sin(rx)
-    y, z = y * cy - z * sy, y * sy + z * cy
-
-    cx, sx = math.cos(ry), math.sin(ry)
-    x, z = x * cx + z * sx, -x * sx + z * cx
-
-    cz, sz = math.cos(rz), math.sin(rz)
-    x, y = x * cz - y * sz, x * sz + y * cz
-    return (x, y, z)
-
-
-def _combine_transform(parent, local):
-    """Compose local transform into parent transform (approximate Euler composition)."""
-    from nmstoolkit.core.mesh_data import Transform
-
-    psx, psy, psz = parent.scale
-    lpx, lpy, lpz = local.position
-    sp = (lpx * psx, lpy * psy, lpz * psz)
-    rp = _rotate_xyz(sp, parent.rotation)
-    wx = parent.position[0] + rp[0]
-    wy = parent.position[1] + rp[1]
-    wz = parent.position[2] + rp[2]
-    return Transform(
-        position=(wx, wy, wz),
-        rotation=(
-            parent.rotation[0] + local.rotation[0],
-            parent.rotation[1] + local.rotation[1],
-            parent.rotation[2] + local.rotation[2],
-        ),
-        scale=(psx * local.scale[0], psy * local.scale[1], psz * local.scale[2]),
-    )
-
-
-def _scene_geometry_instances(scene_root) -> list[tuple[str, object]]:
-    """Flatten scene tree to (geometry_ref, world_transform) instances."""
-    from nmstoolkit.core.mesh_data import Transform
-
-    out: list[tuple[str, object]] = []
-
-    def walk(node, world):
-        composed = _combine_transform(world, node.transform)
-        if node.geometry_ref:
-            out.append((node.geometry_ref, composed))
-        for child in node.children:
-            walk(child, composed)
-
-    walk(scene_root, Transform.identity())
-    return out
-
-
-def _normalize_vec3(v: tuple[float, float, float]) -> tuple[float, float, float]:
-    x, y, z = v
-    m = math.sqrt(x * x + y * y + z * z)
-    if m <= 1e-9:
-        return (0.0, 0.0, 1.0)
-    return (x / m, y / m, z / m)
-
-
-def _apply_transform_to_mesh(mesh, transform):
-    """Apply world transform to mesh vertices/normals."""
-    px, py, pz = transform.position
-    sx, sy, sz = transform.scale
-    rot = transform.rotation
-
-    vertices = []
-    for vx, vy, vz in mesh.vertices:
-        x, y, z = vx * sx, vy * sy, vz * sz
-        x, y, z = _rotate_xyz((x, y, z), rot)
-        vertices.append((x + px, y + py, z + pz))
-
-    normals = []
-    for nx, ny, nz in mesh.normals:
-        x, y, z = _rotate_xyz((nx, ny, nz), rot)
-        normals.append(_normalize_vec3((x, y, z)))
-
-    return type(mesh)(
-        vertices=tuple(vertices),
-        normals=tuple(normals),
-        uvs=mesh.uvs,
-        indices=mesh.indices,
-    )
 
 
 def _required_corvette_modules(inv: dict) -> set[str]:
@@ -708,11 +619,7 @@ class CorvetteTab(QWidget):
         try:
             from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
             from nmstoolkit.adapters.mbin_compiler_adapter import MbinCompilerAdapter
-            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline, MeshCacheEntry
-            from nmstoolkit.core.geometry_exml_fallback import parse_geometry_aabb_fallback
-            from nmstoolkit.core.geometry_parser import parse_geometry
-            from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
-            from nmstoolkit.core.scene_parser import parse_scene
+            from nmstoolkit.core.corvette_mesh_pipeline import CorvetteMeshPipeline
 
             scene_pak = pak_dir / "NMSARC.EntitySceneMBIN.pak"
             if not scene_pak.exists():
@@ -739,22 +646,23 @@ class CorvetteTab(QWidget):
             scene_exml = converter.convert_batch(scene_data)
             pipeline = CorvetteMeshPipeline(cache_dir=self._mesh_cache_dir())
 
-            # Build required geometry reference set from selected scene EXML.
+            # Collect all geometry refs from scene EXML to know what to extract.
+            from nmstoolkit.core.corvette_mesh_pipeline import list_geometry_refs
+
             required_geo_refs: set[str] = set()
-            parsed_scene_by_module: Dict[str, object] = {}
+            scene_exml_by_module: Dict[str, str] = {}
             for module_id, scene_path in scene_by_module.items():
                 exml = scene_exml.get(scene_path)
                 if not exml:
                     continue
-                scene_node = parse_scene(exml)
-                parsed_scene_by_module[module_id] = scene_node
-                for geo_ref, _world in _scene_geometry_instances(scene_node):
+                scene_exml_by_module[module_id] = exml
+                for geo_ref in list_geometry_refs(exml):
                     required_geo_refs.add(_normalize_ref(geo_ref))
 
             if not required_geo_refs:
                 return
 
-            # Geometry binaries live in mesh paks and use .mbin.pc filenames.
+            # Extract geometry binaries from mesh paks (adapter I/O).
             mesh_paks = sorted(pak_dir.glob("NMSARC.Mesh*.pak"))
             geo_map: Dict[str, bytes] = {}
             wanted = set(required_geo_refs)
@@ -792,80 +700,42 @@ class CorvetteTab(QWidget):
                             geo_map[norm[:-3]] = geo_bytes
                         geo_map[geo_path] = geo_bytes
                         geo_map[geo_path.upper()] = geo_bytes
-                        # Also keep paired GEOMETRY.DATA aliases (with/without .pc).
                         if ".geometry.data.mbin" in norm and norm.endswith(".pc"):
                             geo_map[norm[:-3]] = geo_bytes
 
-            decoded_mesh_cache: Dict[str, List[object]] = {}
-
-            def _decode_meshes_for_geo(geo_ref_norm: str) -> List[object]:
-                cached = decoded_mesh_cache.get(geo_ref_norm)
-                if cached is not None:
-                    return cached
-
+            # Convert geometry MBINs to EXML for stream/fallback parsing.
+            geometry_exml: Dict[str, tuple[str, str]] = {}
+            for geo_ref_norm in required_geo_refs:
                 geo_bytes = geo_map.get(geo_ref_norm) or geo_map.get(geo_ref_norm + ".pc")
                 if geo_bytes is None:
-                    decoded_mesh_cache[geo_ref_norm] = []
-                    return []
-
+                    continue
                 try:
-                    geo_exml = converter.convert(geo_bytes)
+                    geo_exml_str = converter.convert(geo_bytes)
                 except Exception:
-                    geo_exml = ""
+                    geo_exml_str = ""
 
-                # Prefer cTkGeometryStreamData for modern .mbin.pc assets.
+                stream_exml_str = ""
                 data_ref = geo_ref_norm.replace(".geometry.mbin", ".geometry.data.mbin")
                 data_bytes = geo_map.get(data_ref) or geo_map.get(data_ref + ".pc")
-                if data_bytes is not None and geo_exml:
+                if data_bytes is not None and geo_exml_str:
                     try:
-                        stream_exml = converter.convert(data_bytes)
-                        stream_meshes = parse_geometry_stream_exml(geo_exml, stream_exml)
-                        if stream_meshes:
-                            decoded_mesh_cache[geo_ref_norm] = stream_meshes
-                            return stream_meshes
+                        stream_exml_str = converter.convert(data_bytes)
                     except Exception:
                         pass
 
-                # Legacy binary geometry path (non-stream assets).
-                meshes = parse_geometry(geo_bytes)
-                if meshes:
-                    decoded_mesh_cache[geo_ref_norm] = meshes
-                    return meshes
+                if geo_exml_str or stream_exml_str:
+                    geometry_exml[geo_ref_norm] = (geo_exml_str, stream_exml_str)
 
-                if not geo_exml:
-                    decoded_mesh_cache[geo_ref_norm] = []
-                    return []
-
-                fallback_meshes = parse_geometry_aabb_fallback(geo_exml)
-                decoded_mesh_cache[geo_ref_norm] = fallback_meshes
-                return fallback_meshes
-
-            for module_id, scene_path in scene_by_module.items():
-                scene_node = parsed_scene_by_module.get(module_id)
-                if scene_node is None:
-                    continue
-
-                module_meshes: List[object] = []
-                first_geo_ref = ""
-                for geo_ref, world_transform in _scene_geometry_instances(scene_node):
-                    geo_ref_norm = _normalize_ref(geo_ref)
-                    if not first_geo_ref:
-                        first_geo_ref = geo_ref
-                    base_meshes = _decode_meshes_for_geo(geo_ref_norm)
-                    if not base_meshes:
-                        continue
-                    module_meshes.extend(_apply_transform_to_mesh(mesh, world_transform) for mesh in base_meshes)
-
-                if module_meshes:
-                    self._3d_view.set_mesh_data(module_id, module_meshes)
-                    pipeline.save_entry(
-                        MeshCacheEntry(
-                            module_id=module_id,
-                            meshes=module_meshes,
-                            texture_path=None,
-                            geometry_ref=first_geo_ref or scene_node.geometry_ref,
-                        )
-                    )
+            # Delegate extraction to pipeline (domain layer).
+            for module_id, exml in scene_exml_by_module.items():
+                entry = pipeline.extract_module(
+                    module_id=module_id,
+                    scene_exml=exml,
+                    geometry_data=geo_map,
+                    geometry_exml=geometry_exml,
+                )
+                if entry.meshes:
+                    self._3d_view.set_mesh_data(module_id, entry.meshes)
 
             QApplication.processEvents()
         except Exception:
