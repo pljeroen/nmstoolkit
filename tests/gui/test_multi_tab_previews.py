@@ -101,9 +101,18 @@ def test_vehicles_preview_tab_and_identity_refresh(monkeypatch):
     tab = VehiclesTab()
     labels = [tab._inv_tabs.tabText(i) for i in range(tab._inv_tabs.count())]
     assert "Preview" not in labels
-    assert hasattr(tab, "_tech_splitter")
-    assert tab._tech_splitter.count() == 2
+    tech_idx = labels.index("Technology + Effects")
+    assert tab._inv_tabs.widget(tech_idx) is tab._inv_tech
+    assert not hasattr(tab, "_tech_splitter")
     assert tab._preview_placeholder.minimumHeight() == 0
+    parent = tab._preview_panel.parentWidget()
+    found_inv_tech_parent = False
+    while parent is not None:
+        if parent is tab._inv_tech:
+            found_inv_tech_parent = True
+            break
+        parent = parent.parentWidget()
+    assert found_inv_tech_parent
 
     psd = {
         "VehicleOwnership": [

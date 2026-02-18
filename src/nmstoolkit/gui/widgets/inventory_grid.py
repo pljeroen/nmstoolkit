@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -736,7 +737,13 @@ class InventoryGrid(QWidget):
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setSpacing(2)
         scroll.setWidget(self._grid_widget)
-        content_layout.addWidget(scroll, 1)
+        self._left_panel = QWidget()
+        self._left_panel_layout = QVBoxLayout(self._left_panel)
+        self._left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self._left_panel_layout.setSpacing(8)
+        self._left_panel_layout.addWidget(scroll, 1)
+        self._bottom_panel: Optional[QWidget] = None
+        content_layout.addWidget(self._left_panel, 1)
 
         self._hover_popup = QWidget(self)
         self._hover_popup.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -848,6 +855,21 @@ class InventoryGrid(QWidget):
         content_layout.addWidget(self._effects_group, 0)
 
         outer.addWidget(content)
+
+    def set_bottom_panel(self, panel: Optional[QWidget]) -> None:
+        """Attach an optional panel under the slot grid (left side), above nothing else."""
+        if self._bottom_panel is panel:
+            return
+        if self._bottom_panel is not None:
+            self._left_panel_layout.removeWidget(self._bottom_panel)
+            self._bottom_panel.setParent(None)
+        self._bottom_panel = panel
+        if panel is None:
+            return
+        panel.setParent(self._left_panel)
+        panel.setMinimumHeight(0)
+        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._left_panel_layout.addWidget(panel, 1)
 
     def set_inventory(self, inventory: dict):
         self._inventory = inventory

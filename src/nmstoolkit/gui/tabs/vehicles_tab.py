@@ -2,7 +2,6 @@
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -12,7 +11,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QProgressBar,
     QSizePolicy,
-    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -97,9 +95,6 @@ class VehiclesTab(QWidget):
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
         self._inv_tabs.addTab(self._inv, "Inventory")
-        self._tech_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._tech_splitter.setChildrenCollapsible(False)
-        self._tech_splitter.addWidget(self._inv_tech)
         self._preview_panel = QWidget()
         preview_layout = QVBoxLayout(self._preview_panel)
         self._preview_identity = QLabel("Seed: —\nResource: —")
@@ -122,13 +117,10 @@ class VehiclesTab(QWidget):
         preview_layout.addWidget(self._preview_status)
         preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
-        self._tech_splitter.addWidget(self._preview_panel)
-        self._tech_splitter.setStretchFactor(0, 3)
-        self._tech_splitter.setStretchFactor(1, 2)
-        self._tech_splitter.setSizes([700, 300])
-        self._inv_tabs.addTab(self._tech_splitter, "Technology + Effects")
+        self._inv_tech.set_bottom_panel(self._preview_panel)
+        self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
-        self._tech_tab_index = self._inv_tabs.indexOf(self._tech_splitter)
+        self._tech_tab_index = self._inv_tabs.indexOf(self._inv_tech)
         self._inv_tabs.currentChanged.connect(self._on_tab_changed)
         self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
         layout.addWidget(self._inv_tabs)
