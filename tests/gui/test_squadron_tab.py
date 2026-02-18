@@ -174,8 +174,12 @@ class TestSquadronTabBasics:
         tab = SquadronTab()
         tab.set_data(psd)
         tab._list.setCurrentRow(0)
-        assert "S" in tab._ship_specs_class.text()
-        assert "250" in tab._ship_specs_dps.text()
+        assert hasattr(tab, "_ship_specs_table")
+        assert tab._ship_specs_table.rowCount() >= 4
+        class_item = tab._ship_specs_table.item(2, 1)
+        dps_item = tab._ship_specs_table.item(3, 1)
+        assert class_item is not None and "S" in class_item.text()
+        assert dps_item is not None and "250" in dps_item.text()
 
     def test_ship_specs_panel_lists_modules_with_tooltips(self):
         from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
@@ -190,6 +194,7 @@ class TestSquadronTabBasics:
                     tech_slots=[
                         {"Id": "^SHIPSHIELD", "Index": {"X": 0, "Y": 0}},
                         {"Id": "^HYPERDRIVE", "Index": {"X": 1, "Y": 0}},
+                        {"Id": "^LAUNCHER", "Index": {"X": 2, "Y": 0}},
                     ],
                 ),
             ],
@@ -197,5 +202,9 @@ class TestSquadronTabBasics:
         tab = SquadronTab()
         tab.set_data(psd)
         tab._list.setCurrentRow(0)
-        assert tab._ship_modules_list.count() >= 2
-        assert tab._ship_modules_list.item(0).toolTip()
+        assert hasattr(tab, "_ship_modules_table")
+        assert tab._ship_modules_table.rowCount() == 1
+        module_item = tab._ship_modules_table.item(0, 0)
+        assert module_item is not None
+        assert "shield" in module_item.text().lower()
+        assert module_item.toolTip()
