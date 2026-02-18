@@ -6,13 +6,38 @@ import math
 import shutil
 from pathlib import Path
 from functools import lru_cache
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QThread, Signal
 from PySide6.QtWidgets import QApplication
 
 from nmstoolkit.core.mesh_data import Mesh, Transform
 from nmstoolkit.paths import external_tools_dir
+
+
+class PreviewLoadThread(QThread):
+    """Runs mesh loading in a worker thread and returns results to the UI thread."""
+
+    completed = Signal(int, object, str)
+
+    def __init__(
+        self,
+        request_id: int,
+        resource_filename: str,
+        loader: Callable[[str], Tuple[List[object], str]],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._request_id = request_id
+        self._resource_filename = resource_filename
+        self._loader = loader
+
+    def run(self) -> None:
+        try:
+            meshes, status = self._loader(self._resource_filename)
+        except Exception as exc:
+            meshes, status = [], f"Preview unavailable: load failed ({exc})."
+        self.completed.emit(self._request_id, meshes, status)
 
 
 def seed_to_text(seed_value) -> str:

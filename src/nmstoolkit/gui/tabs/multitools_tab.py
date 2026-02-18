@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProgressBar,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -20,6 +21,7 @@ from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
 from nmstoolkit.gui.preview_support import (
+    PreviewLoadThread,
     find_scene_resource_filename,
     load_template_preview_meshes,
     seed_to_text,
@@ -36,6 +38,8 @@ class MultitoolsTab(QWidget):
         self._active_index = 0
         self._current_index = -1
         self._preview_view: Optional[QWidget] = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -113,14 +117,19 @@ class MultitoolsTab(QWidget):
         self._preview_fidelity.setWordWrap(True)
         self._preview_status = QLabel("Preview: select a multitool")
         self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
         self._preview_placeholder.setMinimumHeight(280)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
         self._tabs.addTab(self._preview_tab, "Preview")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
@@ -175,7 +184,18 @@ class MultitoolsTab(QWidget):
 
         self._active_label.setText("Yes" if index == self._active_index else "No")
         self._inv_store.set_inventory(store if isinstance(store, dict) else {})
-        self._update_preview(mt)
+        if self._tabs.currentWidget() is self._preview_tab:
+            self._update_preview(mt)
+        else:
+            self._preview_progress.setVisible(False)
+            self._preview_status.setText("Open the Preview tab to load multitool model.")
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._tabs.currentWidget() is not self._preview_tab:
+            return
+        multitool = self._current_multitool()
+        if multitool is not None:
+            self._update_preview(multitool)
 
     def _on_move_up(self):
         idx = self._current_index
@@ -301,10 +321,33 @@ class MultitoolsTab(QWidget):
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
         if not resource:
+            self._preview_progress.setVisible(False)
             self._preview_status.setText("Preview unavailable: multitool resource filename missing.")
             return
-        meshes, status = self._load_preview_meshes(resource)
-        if not meshes:
+        self._start_preview_load(resource)
+
+    def _start_preview_load(self, resource: str) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
             self._preview_status.setText(status)
             return
         self._ensure_preview_view()
@@ -317,6 +360,6 @@ class MultitoolsTab(QWidget):
                 "Slots": [{"Id": "^MULTITOOL_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
             }
         )
-        self._preview_view.set_mesh_data("MULTITOOL_PREVIEW", meshes)
+        self._preview_view.set_mesh_data("MULTITOOL_PREVIEW", mesh_list)
         self._preview_status.setText(status)
         self._preview_view.update()

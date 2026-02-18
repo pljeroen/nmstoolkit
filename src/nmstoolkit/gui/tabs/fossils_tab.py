@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QProgressBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -14,7 +15,11 @@ from PySide6.QtWidgets import (
 )
 from typing import Optional
 
-from nmstoolkit.gui.preview_support import load_template_preview_meshes, resolve_fossil_scene
+from nmstoolkit.gui.preview_support import (
+    PreviewLoadThread,
+    load_template_preview_meshes,
+    resolve_fossil_scene,
+)
 
 # Fossil item ID prefixes — pieces found in inventories
 _FOSSIL_PIECE_PREFIXES = ("FOS_", "PROC_FOSS", "BLD_SKULL")
@@ -127,6 +132,8 @@ class FossilsTab(QWidget):
         super().__init__()
         self._data = None
         self._preview_view: Optional[QWidget] = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -184,12 +191,16 @@ class FossilsTab(QWidget):
         self._preview_fidelity.setWordWrap(True)
         self._preview_status = QLabel("Preview: select a fossil piece or display")
         self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
         self._preview_placeholder.setMinimumHeight(280)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
         self._tabs.addTab(self._preview_tab, "Preview")
 
@@ -295,10 +306,33 @@ class FossilsTab(QWidget):
             "Fidelity: template-level preview (fossil/resource shown; exact procedural reconstruction not guaranteed)"
         )
         if not resource:
+            self._preview_progress.setVisible(False)
             self._preview_status.setText(f"Preview unavailable: {source} fossil resource filename missing.")
             return
-        meshes, status = self._load_preview_meshes(resource)
-        if not meshes:
+        self._start_preview_load(resource)
+
+    def _start_preview_load(self, resource: str) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
             self._preview_status.setText(status)
             return
         self._ensure_preview_view()
@@ -311,6 +345,6 @@ class FossilsTab(QWidget):
                 "Slots": [{"Id": "^FOSSIL_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
             }
         )
-        self._preview_view.set_mesh_data("FOSSIL_PREVIEW", meshes)
+        self._preview_view.set_mesh_data("FOSSIL_PREVIEW", mesh_list)
         self._preview_status.setText(status)
         self._preview_view.update()

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QTabWidget,
@@ -122,11 +123,41 @@ class MainWindow(QMainWindow):
 
         self._profiles: List[SaveProfile] = []
         self._settings = QSettings("NMSToolkit", "NMSToolkit")
+        self._startup_ready = False
 
-        self._auto_load_icons()
-        self._build_ui()
+        self._build_startup_ui()
         self._build_menu()
+        QTimer.singleShot(0, self._finish_startup)
+
+    def _build_startup_ui(self):
+        """Show a lightweight startup view so the window appears immediately."""
+        startup = QWidget()
+        layout = QVBoxLayout(startup)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("Starting NMS Toolkit...")
+        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        layout.addWidget(title)
+
+        msg = QLabel("Loading interface and game data cache.")
+        msg.setStyleSheet("color: #bbb;")
+        layout.addWidget(msg)
+
+        progress = QProgressBar()
+        progress.setRange(0, 0)
+        layout.addWidget(progress)
+        layout.addStretch()
+
+        self.setCentralWidget(startup)
+        self.statusBar().showMessage("Starting up...")
+
+    def _finish_startup(self):
+        """Complete heavy startup work after first paint."""
+        self._build_ui()
+        self._auto_load_icons()
         self._scan_saves()
+        self._startup_ready = True
+        self.statusBar().showMessage("Ready")
 
     def _build_ui(self):
         central = QWidget()

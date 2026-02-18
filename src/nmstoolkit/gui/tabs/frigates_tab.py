@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProgressBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from nmstoolkit.gui.widgets.stat_editor import StatEditor
 from nmstoolkit.gui.preview_support import (
+    PreviewLoadThread,
     find_scene_resource_filename,
     load_template_preview_meshes,
     resolve_frigate_scene,
@@ -107,6 +109,8 @@ class FrigatesTab(QWidget):
         self._frigates = []
         self._current_index = -1
         self._preview_view: Optional[QWidget] = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -191,14 +195,19 @@ class FrigatesTab(QWidget):
         self._preview_fidelity.setWordWrap(True)
         self._preview_status = QLabel("Preview: select a frigate")
         self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
         self._preview_placeholder.setMinimumHeight(280)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
         self._tabs.addTab(self._preview_tab, "Preview")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
@@ -286,7 +295,18 @@ class FrigatesTab(QWidget):
                 friendly = _TRAIT_FRIENDLY.get(raw, raw)
                 active_traits.append(friendly)
         self._traits_label.setText(", ".join(active_traits) if active_traits else "None")
-        self._update_preview(frigate)
+        if self._tabs.currentWidget() is self._preview_tab:
+            self._update_preview(frigate)
+        else:
+            self._preview_progress.setVisible(False)
+            self._preview_status.setText("Open the Preview tab to load frigate model.")
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._tabs.currentWidget() is not self._preview_tab:
+            return
+        frigate = self._current_frigate()
+        if frigate is not None:
+            self._update_preview(frigate)
 
     def _current_frigate(self):
         if self._current_index < 0 or self._current_index >= len(self._frigates):
@@ -383,10 +403,33 @@ class FrigatesTab(QWidget):
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
         if not resource:
+            self._preview_progress.setVisible(False)
             self._preview_status.setText("Preview unavailable: frigate resource filename missing.")
             return
-        meshes, status = self._load_preview_meshes(resource)
-        if not meshes:
+        self._start_preview_load(resource)
+
+    def _start_preview_load(self, resource: str) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
             self._preview_status.setText(status)
             return
         self._ensure_preview_view()
@@ -399,6 +442,6 @@ class FrigatesTab(QWidget):
                 "Slots": [{"Id": "^FRIGATE_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
             }
         )
-        self._preview_view.set_mesh_data("FRIGATE_PREVIEW", meshes)
+        self._preview_view.set_mesh_data("FRIGATE_PREVIEW", mesh_list)
         self._preview_status.setText(status)
         self._preview_view.update()

@@ -17,12 +17,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from nmstoolkit.gui.preview_support import PreviewLoadThread
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
@@ -209,6 +211,8 @@ class ShipsTab(QWidget):
         self._ships = []
         self._current_index = -1
         self._preview_view = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -308,17 +312,22 @@ class ShipsTab(QWidget):
         self._preview_fidelity.setWordWrap(True)
         self._preview_status = QLabel("Preview: select a ship")
         self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
         self._preview_placeholder.setMinimumHeight(280)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
         self._inv_tabs.addTab(self._inv_general, "General")
         self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
         self._inv_tabs.addTab(self._preview_tab, "Preview")
+        self._inv_tabs.currentChanged.connect(self._on_tab_changed)
         self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
         layout.addWidget(self._inv_tabs)
 
@@ -395,7 +404,18 @@ class ShipsTab(QWidget):
         cargo_inv = ship.get("Inventory_Cargo", {})
         self._inv_cargo.set_inventory(cargo_inv)
         self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
-        self._update_preview(ship)
+        if self._inv_tabs.currentWidget() is self._preview_tab:
+            self._update_preview(ship)
+        else:
+            self._preview_progress.setVisible(False)
+            self._preview_status.setText("Open the Preview tab to load ship model.")
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._inv_tabs.currentWidget() is not self._preview_tab:
+            return
+        ship = self._current_ship()
+        if ship is not None:
+            self._update_preview(ship)
 
     def _on_name_changed(self):
         ship = self._current_ship()
@@ -536,11 +556,33 @@ class ShipsTab(QWidget):
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
         if not resource:
+            self._preview_progress.setVisible(False)
             self._preview_status.setText("Preview unavailable: ship resource filename missing.")
             return
+        self._start_preview_load(resource)
 
-        meshes, status = self._load_preview_meshes(resource)
-        if not meshes:
+    def _start_preview_load(self, resource: str) -> None:
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
             self._preview_status.setText(status)
             return
 
@@ -556,7 +598,7 @@ class ShipsTab(QWidget):
                 ],
             }
         )
-        self._preview_view.set_mesh_data("SHIP_PREVIEW", meshes)
+        self._preview_view.set_mesh_data("SHIP_PREVIEW", mesh_list)
         self._preview_status.setText(status)
         self._preview_view.update()
 
