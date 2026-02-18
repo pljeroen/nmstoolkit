@@ -299,6 +299,8 @@ language/nms_update3_english.mbin
 
 Each is a `cTkLocalisationTable` with `Id`/`English` pairs. Merge all files to get complete coverage. Replace `english` with your target language code for localization.
 
+UI language switching is independent of installed game locale files and uses the toolkit's bundled `data/i18n` catalogues. Game-string localization (item/tech names from game data) still depends on matching language MBINs in `NMSARC.MetadataEtc.pak`; if unavailable, game strings fall back to English.
+
 ### Icon Extraction Pipeline
 
 Icons are DDS textures stored in `NMSARC.TexUI.pak` under `TEXTURES/UI/FRONTEND/ICONS/`. The full pipeline:

@@ -120,31 +120,17 @@ _ITEM_SYMBOLS = None
 def _get_item_name(item_id: str) -> str:
     """Resolve an item ID to a display name.
 
-    Priority: items.json (curated proper-case names) > catalogue display_name
-    (game locale is ALL CAPS) > catalogue locale fallback > raw ID.
+    Priority: catalogue display_name (selected game locale) > catalogue locale
+    fallback > items.json curated fallback > raw ID.
     """
     global _ITEM_NAMES
 
-    # 1. items.json has curated proper-case names — check first
-    if _ITEM_NAMES is None:
-        _ITEM_NAMES = _load_item_names()
-
-    name = _ITEM_NAMES.get(item_id)
-    if name:
-        return name
-    # Procedural items in items.json
-    if "#" in item_id:
-        base_id = item_id.split("#")[0]
-        name = _ITEM_NAMES.get(base_id)
-        if name:
-            return name
-
-    # 1b. Fossil items get friendly names
+    # 1. Fossil items get friendly names
     from nmstoolkit.gui.tabs.fossils_tab import is_fossil_item, friendly_fossil_name
     if is_fossil_item(item_id):
         return friendly_fossil_name(item_id)
 
-    # 2. Catalogue display_name (ALL CAPS from game locale, title-cased)
+    # 2. Catalogue display_name (from selected game locale)
     if _CATALOGUE is not None:
         item = _CATALOGUE.find_item(item_id)
         if item is None and item_id.startswith("^"):
@@ -168,6 +154,19 @@ def _get_item_name(item_id: str) -> str:
         locale_name = _CATALOGUE.locale.get(bare) or _CATALOGUE.locale.get(item_id)
         if locale_name:
             return _title_case_name(locale_name)
+
+    # 3. items.json curated fallback (English/static)
+    if _ITEM_NAMES is None:
+        _ITEM_NAMES = _load_item_names()
+
+    name = _ITEM_NAMES.get(item_id)
+    if name:
+        return name
+    if "#" in item_id:
+        base_id = item_id.split("#")[0]
+        name = _ITEM_NAMES.get(base_id)
+        if name:
+            return name
 
     return item_id.lstrip("^") if item_id else "Empty"
 

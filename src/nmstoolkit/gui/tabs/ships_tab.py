@@ -649,11 +649,16 @@ class ShipsTab(QWidget):
                 files = {_normalize_ref(f): f for f in pak.list_files()}
                 to_extract = []
                 for ref in list(missing):
-                    if ref + ".pc" in files:
-                        to_extract.append(files[ref + ".pc"])
-                        data_ref = ref.replace(".geometry.mbin", ".geometry.data.mbin")
-                        if data_ref + ".pc" in files:
-                            to_extract.append(files[data_ref + ".pc"])
+                    data_ref = ref.replace(".geometry.mbin", ".geometry.data.mbin")
+                    found_any = False
+                    for candidate in (ref, ref + ".pc"):
+                        if candidate in files:
+                            to_extract.append(files[candidate])
+                            found_any = True
+                    for data_candidate in (data_ref, data_ref + ".pc"):
+                        if data_candidate in files:
+                            to_extract.append(files[data_candidate])
+                    if found_any:
                         missing.discard(ref)
                 if not to_extract:
                     continue
@@ -666,6 +671,9 @@ class ShipsTab(QWidget):
 
         decoded_by_ref = {}
         meshes: List[Mesh] = []
+        stream_ok = 0
+        binary_ok = 0
+        fallback_ok = 0
         for ref, world in instances:
             base_meshes = decoded_by_ref.get(ref)
             if base_meshes is None:
@@ -687,6 +695,8 @@ class ShipsTab(QWidget):
                         stream_meshes = parse_geometry_stream_exml(geo_exml, stream_exml)
                         if stream_meshes:
                             base_meshes = [m for m in stream_meshes if _mesh_is_valid(m)]
+                            if base_meshes:
+                                stream_ok += 1
                             decoded_by_ref[ref] = base_meshes
                     except Exception:
                         pass
@@ -694,10 +704,14 @@ class ShipsTab(QWidget):
                     binary_meshes = parse_geometry(geo_bytes)
                     if binary_meshes:
                         base_meshes = [m for m in binary_meshes if _mesh_is_valid(m)]
+                        if base_meshes:
+                            binary_ok += 1
                         decoded_by_ref[ref] = base_meshes
                 if not base_meshes and geo_exml:
                     fallback = parse_geometry_aabb_fallback(geo_exml)
                     base_meshes = [m for m in fallback if _mesh_is_valid(m)]
+                    if base_meshes:
+                        fallback_ok += 1
                     decoded_by_ref[ref] = base_meshes
             if not base_meshes:
                 continue
@@ -706,4 +720,14 @@ class ShipsTab(QWidget):
         QApplication.processEvents()
         if not meshes:
             return [], "Preview unavailable: no renderable mesh data found."
-        return meshes, f"Preview loaded ({len(meshes)} meshes, geometry-only template-level)."
+        full_refs = stream_ok + binary_ok
+        if full_refs and not fallback_ok:
+            fidelity = "full geometry render"
+        elif full_refs and fallback_ok:
+            fidelity = "mixed geometry render"
+        else:
+            fidelity = "fallback geometry render"
+        return meshes, (
+            f"Preview loaded ({len(meshes)} meshes; {fidelity}; "
+            f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok})."
+        )

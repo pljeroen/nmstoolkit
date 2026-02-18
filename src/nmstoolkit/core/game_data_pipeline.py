@@ -36,22 +36,27 @@ _PRECACHE_TARGETS = [
     "metadata/reality/tables/nms_reality_gcproceduraltechnologytable.mbin",
 ]
 
-# Language files are split across multiple loc files
-_LANGUAGE_PREFIXES = [
-    "language/nms_loc1_english.mbin",
-    "language/nms_loc4_english.mbin",
-    "language/nms_loc5_english.mbin",
-    "language/nms_loc6_english.mbin",
-    "language/nms_loc7_english.mbin",
-    "language/nms_loc8_english.mbin",
-    "language/nms_loc9_english.mbin",
-    "language/nms_update3_english.mbin",
+_LANGUAGE_FILE_PREFIXES = [
+    "language/nms_loc1_{lang}.mbin",
+    "language/nms_loc4_{lang}.mbin",
+    "language/nms_loc5_{lang}.mbin",
+    "language/nms_loc6_{lang}.mbin",
+    "language/nms_loc7_{lang}.mbin",
+    "language/nms_loc8_{lang}.mbin",
+    "language/nms_loc9_{lang}.mbin",
+    "language/nms_update3_{lang}.mbin",
 ]
+
+
+def _language_targets(language: str) -> list[str]:
+    lang = (language or "english").strip().lower()
+    return [p.format(lang=lang) for p in _LANGUAGE_FILE_PREFIXES]
 
 
 def build_catalogue(
     pak_dir: Union[str, Path],
     mbin_compiler: Union[str, Path],
+    language: str = "english",
 ) -> GameCatalogue:
     """Build a GameCatalogue from NMS game files.
 
@@ -71,10 +76,12 @@ def build_catalogue(
         _PRECACHE_TARGETS,
     )
 
+    lang_targets = _language_targets(language)
+
     # Extract language MBINs from MetadataEtc.pak
     language_mbins = _extract_from_pak(
         pak_dir / "NMSARC.MetadataEtc.pak",
-        _LANGUAGE_PREFIXES,
+        lang_targets,
     )
 
     # Convert all MBINs to EXML
@@ -91,7 +98,7 @@ def build_catalogue(
 
     # Build merged locale from all language files
     locale: Dict[str, str] = {}
-    for lang_path in _LANGUAGE_PREFIXES:
+    for lang_path in lang_targets:
         if lang_path in all_exml:
             locale.update(parse_locale_table(all_exml[lang_path]))
 

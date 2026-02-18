@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -37,6 +38,13 @@ from nmstoolkit.paths import (
 )
 from nmstoolkit.core.save_file import SaveFile
 from nmstoolkit.core.save_scanner import SaveProfile, scan_for_profiles
+from nmstoolkit.gui.i18n import (
+    apply_menu_translation,
+    apply_ui_translation,
+    available_ui_languages,
+    set_ui_language,
+    ui_tr,
+)
 from nmstoolkit.gui.widgets.icon_provider import IconProvider
 from nmstoolkit.gui.tabs.json_editor_tab import JsonEditorTab
 from nmstoolkit.gui.tabs.exosuit_tab import ExosuitTab
@@ -62,6 +70,25 @@ DATA_DIR = resource_dir()
 KEY_MAP_PATH = DATA_DIR / "jsonmap.txt"
 ACCOUNT_KEY_MAP_PATH = DATA_DIR / "jsonmapac.txt"
 
+_LANGUAGE_DISPLAY = {
+    "english": "English",
+    "french": "Français",
+    "german": "Deutsch",
+    "italian": "Italiano",
+    "spanish": "Español",
+    "latamspanish": "Español (LatAm)",
+    "portuguese": "Português",
+    "brazilianportuguese": "Português (Brasil)",
+    "russian": "Русский",
+    "polish": "Polski",
+    "dutch": "Nederlands",
+    "japanese": "日本語",
+    "koreana": "한국어",
+    "schinese": "简体中文",
+    "tchinese": "繁體中文",
+    "turkish": "Türkçe",
+}
+
 
 def _user_cache_dir() -> Path:
     """Return writable icon cache directory."""
@@ -75,6 +102,26 @@ def _extraction_manifest_path() -> Path:
 def _external_tools_dir() -> Path:
     """Return directory for external tool binaries (MBINCompiler, etc.)."""
     return external_tools_dir()
+
+
+def _catalogue_cache_path(language: str) -> Path:
+    lang = (language or "english").strip().lower()
+    cache_dir = _user_cache_dir()
+    return cache_dir / f"game_catalogue.{lang}.json"
+
+
+def _catalogue_has_display_names(catalogue) -> bool:
+    """Heuristic: locale extraction succeeded when many display names are non-empty."""
+    if catalogue is None:
+        return False
+    pool = []
+    pool.extend(catalogue.products[:400])
+    pool.extend(catalogue.substances[:200])
+    pool.extend(catalogue.technologies[:400])
+    if not pool:
+        return False
+    non_empty = sum(1 for i in pool if (i.get("display_name") or "").strip())
+    return non_empty >= 20
 
 
 def _detect_save_dirs() -> List[Path]:
@@ -133,6 +180,9 @@ class MainWindow(QMainWindow):
         self._profiles: List[SaveProfile] = []
         self._settings = QSettings("NMSToolkit", "NMSToolkit")
         self._startup_ready = False
+        self._language_cache_key: Optional[str] = None
+        self._language_cache_tokens: List[str] = ["english"]
+        set_ui_language(self._selected_game_language())
 
         self._build_startup_ui()
         self._build_menu()
@@ -159,6 +209,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(startup)
         self.statusBar().showMessage("Starting up...")
+        self._apply_ui_language()
 
     def _finish_startup(self):
         """Complete heavy startup work after first paint."""
@@ -168,6 +219,7 @@ class MainWindow(QMainWindow):
         self._scan_saves()
         self._startup_ready = True
         self.statusBar().showMessage("Ready")
+        self._apply_ui_language()
 
     def _build_ui(self):
         central = QWidget()
@@ -264,6 +316,7 @@ class MainWindow(QMainWindow):
 
         # Status bar
         self.statusBar().showMessage("Ready")
+        self._apply_ui_language()
 
     def _create_main_tab(self) -> QWidget:
         widget = QWidget()
@@ -324,8 +377,191 @@ class MainWindow(QMainWindow):
         file_menu.addAction("&Quit", self.close, "Ctrl+Q")
 
         tools_menu = menu.addMenu("&Tools")
-        tools_menu.addAction("Extract Game &Icons...", self._on_extract_icons)
         tools_menu.addAction("External &Dependencies...", self._on_external_deps)
+
+        self._language_menu = menu.addMenu("&Language")
+        self._language_action_group = QActionGroup(self)
+        self._language_action_group.setExclusive(True)
+        self._refresh_language_menu()
+        self._apply_ui_language()
+
+    def _selected_game_language(self) -> str:
+        value = str(self._settings.value("game_language", "english")).strip().lower()
+        return value or "english"
+
+    def _available_installed_game_languages(self) -> List[str]:
+        game_dir = self._settings.value("game_dir", "")
+        if not game_dir:
+            return ["english"]
+        game_path, pak_dir = self._resolve_game_and_pak_paths(Path(str(game_dir)))
+        if game_path is None or pak_dir is None:
+            return ["english"]
+        meta_pak = pak_dir / "NMSARC.MetadataEtc.pak"
+        if not meta_pak.exists():
+            return ["english"]
+        cache_key = str(meta_pak)
+        if cache_key == self._language_cache_key and self._language_cache_tokens:
+            return list(self._language_cache_tokens)
+        try:
+            from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
+
+            langs = set()
+            with HgpakAdapter.from_path(meta_pak) as pak:
+                for path in pak.list_files():
+                    norm = str(path).replace("\\", "/").lower()
+                    if norm.startswith("language/nms_loc1_") and norm.endswith(".mbin"):
+                        token = norm.removeprefix("language/nms_loc1_").removesuffix(".mbin")
+                        if token:
+                            langs.add(token)
+            if not langs:
+                return ["english"]
+            ordered = sorted(langs)
+            if "english" in ordered:
+                ordered.remove("english")
+                ordered.insert(0, "english")
+            self._language_cache_key = cache_key
+            self._language_cache_tokens = list(ordered)
+            return ordered
+        except Exception:
+            return ["english"]
+
+    def _refresh_language_menu(self) -> None:
+        if not hasattr(self, "_language_menu") or not hasattr(self, "_language_action_group"):
+            return
+        self._language_menu.clear()
+        for action in list(self._language_action_group.actions()):
+            self._language_action_group.removeAction(action)
+        selected = self._selected_game_language()
+        for token in available_ui_languages():
+            label = _LANGUAGE_DISPLAY.get(token, token.replace("_", " ").title())
+            action = self._language_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(token == selected)
+            action.triggered.connect(lambda checked, t=token: self._on_language_selected(t))
+            self._language_action_group.addAction(action)
+
+    def _on_language_selected(self, language: str) -> None:
+        language = (language or "english").strip().lower()
+        if language == self._selected_game_language():
+            return
+        self._settings.setValue("game_language", language)
+        set_ui_language(language)
+        self.statusBar().showMessage(f"Switching language to {language}...")
+        self._apply_ui_language()
+        self._reload_catalogue_for_selected_language()
+
+    def _reload_catalogue_for_selected_language(self) -> None:
+        from nmstoolkit.core.game_catalogue import GameCatalogue
+        from nmstoolkit.gui.widgets.inventory_grid import set_catalogue, set_icon_provider
+
+        selected_lang = self._selected_game_language()
+        cache_dir = _user_cache_dir()
+
+        def _apply_catalogue(cat: GameCatalogue) -> None:
+            set_catalogue(cat)
+            icon_cache = IconCache(cache_dir)
+            extractor = IconExtractor(Path(), cache_dir)
+            icon_map = extractor.load_icon_map()
+            provider = IconProvider(icon_cache, cat, icon_map=icon_map)
+            set_icon_provider(provider)
+            self._refresh_catalogue_dependent_tabs(refresh_recipes=True)
+            if self._save_file:
+                self._populate_tabs()
+
+        def _load_cached(language: str) -> bool:
+            lang_cache = _catalogue_cache_path(language)
+            if not lang_cache.exists():
+                return False
+            try:
+                cat = GameCatalogue.from_json(lang_cache.read_text())
+                if not _catalogue_has_display_names(cat):
+                    return False
+                _apply_catalogue(cat)
+                return True
+            except Exception:
+                return False
+
+        if _load_cached(selected_lang):
+            self.statusBar().showMessage(
+                f"Language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}"
+            )
+            self._apply_ui_language()
+            return
+
+        if selected_lang != "english" and _load_cached("english"):
+            self.statusBar().showMessage(
+                f"UI language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}; game strings using English fallback."
+            )
+            self._apply_ui_language()
+            return
+
+        game_dir = self._settings.value("game_dir", "")
+        if not game_dir:
+            self.statusBar().showMessage(
+                f"UI language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}. "
+                "Set game directory to refresh game strings."
+            )
+            return
+        game_path, pak_dir = self._resolve_game_and_pak_paths(Path(str(game_dir)))
+        if game_path is None or pak_dir is None:
+            self.statusBar().showMessage(
+                f"UI language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}. "
+                "Could not locate PCBANKS for game-string refresh."
+            )
+            return
+        mbin_compiler = self._find_mbin_compiler(pak_dir)
+        if mbin_compiler is None:
+            self.statusBar().showMessage(
+                f"UI language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}. "
+                "MBINCompiler not found for game-string refresh."
+            )
+            return
+        from nmstoolkit.core.game_data_pipeline import build_catalogue
+
+        installed = set(self._available_installed_game_languages())
+
+        def _build_and_cache(language: str) -> bool:
+            try:
+                cat = build_catalogue(
+                    str(pak_dir),
+                    str(mbin_compiler),
+                    language=language,
+                )
+                (cache_dir / "game_catalogue.json").write_text(cat.to_json())
+                _catalogue_cache_path(language).write_text(cat.to_json())
+                _apply_catalogue(cat)
+                return True
+            except Exception:
+                return False
+
+        built_selected = selected_lang in installed and _build_and_cache(selected_lang)
+        if built_selected:
+            self.statusBar().showMessage(
+                f"Language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}"
+            )
+            self._apply_ui_language()
+            return
+
+        if _build_and_cache("english"):
+            if selected_lang == "english":
+                self.statusBar().showMessage("Language switched to English")
+            else:
+                self.statusBar().showMessage(
+                    f"UI language switched to {_LANGUAGE_DISPLAY.get(selected_lang, selected_lang)}; "
+                    "game strings using English fallback."
+                )
+            self._apply_ui_language()
+            return
+
+        self.statusBar().showMessage("Language refresh failed for game strings; UI language still applied.")
+        self._apply_ui_language()
+
+    def _apply_ui_language(self) -> None:
+        """Apply current UI translation to window, menus, and active widgets."""
+        set_ui_language(self._selected_game_language())
+        self.setWindowTitle(ui_tr("NMS Toolkit — No Man's Sky Save Editor"))
+        apply_menu_translation(self.menuBar())
+        apply_ui_translation(self)
 
     # ------------------------------------------------------------------
     # Icon extraction
@@ -370,11 +606,17 @@ class MainWindow(QMainWindow):
 
         # Load cached catalogue if available
         catalogue = None
-        cat_path = cache_dir / "game_catalogue.json"
+        selected_lang = self._selected_game_language()
+        cat_path_lang = _catalogue_cache_path(selected_lang)
+        cat_path_default = cache_dir / "game_catalogue.json"
+        cat_path = cat_path_lang if cat_path_lang.exists() else cat_path_default
         if cat_path.exists():
             try:
                 catalogue = GameCatalogue.from_json(cat_path.read_text())
-                set_catalogue(catalogue)
+                if _catalogue_has_display_names(catalogue):
+                    set_catalogue(catalogue)
+                else:
+                    catalogue = None
             except Exception:
                 pass
 
@@ -405,8 +647,7 @@ class MainWindow(QMainWindow):
 
         provider = IconProvider(icon_cache, catalogue, icon_map=icon_map)
         set_icon_provider(provider)
-        self._recipe_finder_tab.refresh_icons()
-        self._fish_finder_tab.refresh_icons()
+        self._refresh_catalogue_dependent_tabs(refresh_recipes=False)
 
     def _resolve_game_and_pak_paths(self, selected_dir: Path) -> tuple[Path, Path] | tuple[None, None]:
         """Normalize selected game directory into (game_root, pcbanks)."""
@@ -430,7 +671,13 @@ class MainWindow(QMainWindow):
         ]
         if mbin_compiler is not None:
             files.append(mbin_compiler)
-        return fingerprint_from_files(files, extra={"scheme": "icons_catalogue"})
+        return fingerprint_from_files(
+            files,
+            extra={
+                "scheme": "icons_catalogue",
+                "language": self._selected_game_language(),
+            },
+        )
 
     def _auto_refresh_game_data_if_stale(self) -> None:
         """Refresh extracted game data automatically when game files changed."""
@@ -462,6 +709,8 @@ class MainWindow(QMainWindow):
             return
 
         self._settings.setValue("game_dir", game_dir)
+        if hasattr(self, "_language_menu"):
+            self._refresh_language_menu()
         game_path, pak_dir = self._resolve_game_and_pak_paths(Path(game_dir))
         if game_path is None or pak_dir is None:
             QMessageBox.warning(
@@ -532,12 +781,17 @@ class MainWindow(QMainWindow):
                 from nmstoolkit.core.game_data_pipeline import build_catalogue
                 from nmstoolkit.gui.widgets.inventory_grid import set_catalogue
 
-                cat = build_catalogue(str(pak_dir), str(mbin_compiler))
+                cat = build_catalogue(
+                    str(pak_dir),
+                    str(mbin_compiler),
+                    language=self._selected_game_language(),
+                )
                 set_catalogue(cat)
 
                 # Save catalogue for future sessions
-                cat_path = cache_dir / "game_catalogue.json"
-                cat_path.write_text(cat.to_json())
+                cat_json = cat.to_json()
+                (cache_dir / "game_catalogue.json").write_text(cat_json)
+                _catalogue_cache_path(self._selected_game_language()).write_text(cat_json)
 
                 # Build icon_map from catalogue: real DDS paths matched to cache
                 icon_cache = IconCache(cache_dir)
@@ -581,8 +835,7 @@ class MainWindow(QMainWindow):
         set_icon_provider(provider)
 
         # Refresh recipe tab with newly extracted catalogue data
-        self._recipe_finder_tab.refresh_recipes()
-        self._fish_finder_tab.refresh_icons()
+        self._refresh_catalogue_dependent_tabs(refresh_recipes=True)
 
         if self._save_file:
             self._populate_tabs()
@@ -602,6 +855,18 @@ class MainWindow(QMainWindow):
                 "Icons will load automatically on next startup."
             )
         return True
+
+    def _refresh_catalogue_dependent_tabs(self, refresh_recipes: bool) -> None:
+        """Refresh tabs that render locale/icon-derived content."""
+        recipe_tab = getattr(self, "_recipe_finder_tab", None)
+        fish_tab = getattr(self, "_fish_finder_tab", None)
+        if recipe_tab is not None:
+            if refresh_recipes and hasattr(recipe_tab, "refresh_recipes"):
+                recipe_tab.refresh_recipes()
+            if hasattr(recipe_tab, "refresh_icons"):
+                recipe_tab.refresh_icons()
+        if fish_tab is not None and hasattr(fish_tab, "refresh_icons"):
+            fish_tab.refresh_icons()
 
     def _on_extract_corvette_models(self):
         """Extract corvette module 3D models from game PAK files."""

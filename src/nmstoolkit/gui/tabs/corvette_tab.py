@@ -382,20 +382,39 @@ def _find_mbin_compiler(pak_dir: Path) -> Optional[Path]:
 def _is_corvette_ship(ship: dict) -> bool:
     """Check if a ship is a corvette.
 
-    Detection: BIGGS model filename OR presence of corvette module IDs
-    (B_COK, B_HAB, B_WNG, etc.) in inventory slots.
+    Detection priority:
+    1) BIGGS model filename (authoritative)
+    2) Conservative fallback when filename is missing: require multiple
+       installed corvette modules with cockpit + structural companion.
     """
     filename = ship.get("Resource", {}).get("Filename", "").upper()
     if "BIGGS" in filename:
         return True
-    # Fallback: check for corvette-specific modules in inventory
-    slots = ship.get("Inventory", {}).get("Slots", [])
-    for slot in slots:
-        slot_id = slot.get("Id", "").lstrip("^").upper()
-        for prefix in _CORVETTE_MODULE_PREFIXES:
-            if slot_id.startswith(prefix):
-                return True
-    return False
+
+    # Conservative fallback only when filename is absent/unknown.
+    if filename:
+        return False
+
+    module_ids: set[str] = set()
+    for inv_key in ("Inventory", "Inventory_TechOnly"):
+        slots = ship.get(inv_key, {}).get("Slots", [])
+        for slot in slots:
+            if not isinstance(slot, dict):
+                continue
+            slot_type = (
+                slot.get("Type", {})
+                .get("InventoryType", "")
+                .upper()
+            )
+            if slot_type and slot_type != "TECHNOLOGY":
+                continue
+            slot_id = str(slot.get("Id", "")).lstrip("^").upper()
+            if slot_id.startswith("B_"):
+                module_ids.add(slot_id)
+
+    has_cockpit = any(mid.startswith("B_COK") for mid in module_ids)
+    has_structure = any(mid.startswith(("B_WNG", "B_HAB", "B_STR")) for mid in module_ids)
+    return len(module_ids) >= 3 and has_cockpit and has_structure
 
 
 class CorvetteTab(QWidget):
@@ -621,13 +640,13 @@ class CorvetteTab(QWidget):
                             f"3D view unavailable: {exc}"
                         )
                     return
-            # Feed current draft data to 3D view
-            if self._data is not None:
-                draft_inv = self._data.get("CorvetteStorageInventory", {})
-                self._3d_view.set_modules(draft_inv)
+            # Feed currently selected data to 3D view.
+            selected_inv = self._selected_inventory_for_3d()
+            if selected_inv is not None:
+                self._3d_view.set_modules(selected_inv)
                 # Force refresh once when entering 3D so stale cached proxy meshes
                 # don't hide improved gamefile/parts-derived geometry.
-                self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
+                self._load_missing_meshes_from_gamefiles(selected_inv, force=True)
             self._draft_stack.setCurrentIndex(1)
             self._view_toggle_btn.setText("Switch to 2D Grid")
         else:
@@ -946,6 +965,12 @@ class CorvetteTab(QWidget):
         slots = inv.get("Slots", [])
         self._update_summary(slots)
 
+        # Keep 3D view in sync with current selection if it is active.
+        if self._3d_view is not None and self._draft_stack.currentIndex() == 1:
+            self._3d_view.set_modules(inv)
+            self._load_missing_meshes_from_gamefiles(inv, force=True)
+            self._3d_view.update()
+
     def _show_draft(self):
         """Show the active corvette draft."""
         psd = self._data
@@ -981,6 +1006,9 @@ class CorvetteTab(QWidget):
         # Update 3D view if it exists
         if self._3d_view is not None:
             self._3d_view.set_modules(draft_inv)
+            if self._draft_stack.currentIndex() == 1:
+                self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
+                self._3d_view.update()
 
         # Module summary from draft
         slots = draft_inv.get("Slots", [])
@@ -997,6 +1025,17 @@ class CorvetteTab(QWidget):
         for category in sorted(counts.keys()):
             summary_lines.append(f"{category}: {counts[category]}")
         self._summary_label.setText("\n".join(summary_lines))
+
+    def _selected_inventory_for_3d(self) -> Optional[dict]:
+        """Return currently selected inventory payload for 3D rendering."""
+        if self._data is None:
+            return None
+        if self._current_index < 0:
+            return self._data.get("CorvetteStorageInventory", {})
+        ship = self._current_ship()
+        if ship is None:
+            return None
+        return ship.get("Inventory", {})
 
     def _current_ship(self) -> Optional[dict]:
         """Get the currently selected ship dict, or None for draft."""

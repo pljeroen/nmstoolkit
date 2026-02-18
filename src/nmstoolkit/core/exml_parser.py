@@ -261,13 +261,27 @@ def parse_season_table(source: Union[str, bytes]) -> List[Dict[str, Any]]:
 
 
 def parse_locale_table(source: Union[str, bytes]) -> Dict[str, str]:
-    """Parse a cTkLocalisationTable EXML into an id→English string mapping."""
+    """Parse a cTkLocalisationTable EXML into an id→localized string mapping."""
     locale = {}
     for entry in _get_table_entries(source):
-        locale_id = _get_field(entry, "Id")
-        english = _get_field(entry, "English")
-        if locale_id is not None and english is not None:
-            locale[locale_id] = english
+        locale_id = _get_field(entry, "Id") or _get_field(entry, "ID")
+        if not locale_id:
+            continue
+
+        # Language tables vary by game version/platform; pick the first
+        # non-empty localized value field instead of hardcoding "English".
+        text_value = ""
+        for prop in entry.findall("Property"):
+            name = (prop.get("name") or "").upper()
+            if name in {"ID", "IDLOWER", "USEPLAYERNAME"}:
+                continue
+            value = prop.get("value")
+            if value is not None and value != "":
+                text_value = value
+                break
+
+        if text_value != "":
+            locale[locale_id] = text_value
     return locale
 
 

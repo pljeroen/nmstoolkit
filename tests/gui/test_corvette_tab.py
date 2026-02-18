@@ -288,6 +288,32 @@ class TestCorvetteFilterExcludesNonCorvettes:
         assert tab._corvette_combo.count() == 1
         assert "Real Corvette" in tab._corvette_combo.itemText(0)
 
+    def test_cargo_module_item_does_not_mark_corvette(self, qapp):
+        """A non-BIGGS ship carrying B_* product items must not be listed."""
+        tab = CorvetteTab()
+        ship_with_cargo_item = {
+            "Name": "Loot Hauler",
+            "Resource": {"Filename": "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN"},
+            "Inventory": {
+                "Slots": [
+                    {
+                        "Id": "B_COK_A",
+                        "Type": {"InventoryType": "Product"},
+                        "Index": {"X": 0, "Y": 0},
+                    }
+                ],
+                "ValidSlotIndices": [],
+                "Class": {"InventoryClass": "A"},
+                "Width": 10,
+                "Height": 5,
+            },
+            "Inventory_TechOnly": {"Slots": []},
+        }
+        psd = {"ShipOwnership": [ship_with_cargo_item, _make_corvette_ship("Real Corvette")]}
+        tab.set_data(psd)
+        assert tab._corvette_combo.count() == 1
+        assert "Real Corvette" in tab._corvette_combo.itemText(0)
+
 
 class TestCorvetteModelGuidance:
     """R-CORV-02: Show helpful message when models unavailable."""
@@ -297,6 +323,36 @@ class TestCorvetteModelGuidance:
         tab = CorvetteTab()
         assert tab._3d_view is None
         assert tab._3d_placeholder is not None
+
+
+class TestCorvette3DBinding:
+    def test_selected_completed_ship_drives_3d_modules(self, qapp, monkeypatch):
+        class Dummy3D:
+            def __init__(self):
+                self.last_modules = None
+
+            def set_modules(self, inv):
+                self.last_modules = inv
+
+            def update(self):
+                pass
+
+        tab = CorvetteTab()
+        alpha = _make_corvette_ship("Alpha")
+        beta = _make_corvette_ship("Beta")
+        psd = _make_psd(corvettes=[alpha, beta])
+        tab.set_data(psd)
+        dummy = Dummy3D()
+        tab._3d_view = dummy
+        tab._draft_stack.setCurrentIndex(1)
+        monkeypatch.setattr(
+            tab,
+            "_load_missing_meshes_from_gamefiles",
+            lambda inv, force=False: None,
+        )
+
+        tab._on_corvette_selected(1)
+        assert dummy.last_modules is beta["Inventory"]
 
 
 class TestCorvetteGamefileHelpers:
