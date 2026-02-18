@@ -141,6 +141,11 @@ def list_geometry_refs(scene_exml: str) -> List[str]:
 # Multi-format geometry decoding (R-PU-04)
 # ---------------------------------------------------------------------------
 
+def _normalize_ref(path: str) -> str:
+    """Normalize a geometry/scene reference path for consistent lookups."""
+    return path.replace("\\", "/").lower()
+
+
 def _decode_geometry(
     geo_ref: str,
     geometry_data: Dict[str, bytes],
@@ -151,30 +156,33 @@ def _decode_geometry(
 
     Priority: stream EXML → binary → AABB fallback.
     Results are cached per geo_ref to avoid redundant decoding.
+    Lookups are normalized (lowercase, forward-slash) to handle EXML refs
+    that use backslashes or mixed case.
     """
-    if geo_ref in cache:
-        return cache[geo_ref]
+    norm_ref = _normalize_ref(geo_ref)
+    if norm_ref in cache:
+        return cache[norm_ref]
 
     # Try stream EXML first (highest fidelity for modern .mbin.pc)
-    exml_pair = geometry_exml.get(geo_ref)
+    exml_pair = geometry_exml.get(norm_ref) or geometry_exml.get(geo_ref)
     if exml_pair is not None:
         geo_exml_str, stream_exml_str = exml_pair
         if geo_exml_str and stream_exml_str:
             try:
                 result = parse_geometry_stream_exml(geo_exml_str, stream_exml_str)
                 if result:
-                    cache[geo_ref] = result
+                    cache[norm_ref] = result
                     return result
             except Exception:
                 pass
 
     # Try binary geometry
-    raw = geometry_data.get(geo_ref)
+    raw = geometry_data.get(norm_ref) or geometry_data.get(geo_ref)
     if raw is not None:
         try:
             result = parse_geometry(raw)
             if result:
-                cache[geo_ref] = result
+                cache[norm_ref] = result
                 return result
         except Exception:
             pass
@@ -186,12 +194,12 @@ def _decode_geometry(
             try:
                 result = parse_geometry_aabb_fallback(geo_exml_str)
                 if result:
-                    cache[geo_ref] = result
+                    cache[norm_ref] = result
                     return result
             except Exception:
                 pass
 
-    cache[geo_ref] = []
+    cache[norm_ref] = []
     return []
 
 

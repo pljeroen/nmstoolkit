@@ -70,6 +70,18 @@ def _get_module_category(item_id: str) -> str:
     return "Unknown"
 
 
+def _get_module_display_name(item_id: str) -> str:
+    """Get human-readable name for a module ID via inventory_grid resolver."""
+    try:
+        from nmstoolkit.gui.widgets.inventory_grid import _get_item_name
+        name = _get_item_name(item_id)
+        if name and name != item_id:
+            return name
+    except Exception:
+        pass
+    return item_id
+
+
 def _get_module_color(item_id: str) -> Tuple[float, float, float]:
     """Get RGB color for a module ID."""
     cat = _get_module_category(item_id)
@@ -725,10 +737,11 @@ class Corvette3DView(QOpenGLWidget):
         layer_row = int(slot.get("_layer_row", y))
         item_id = str(slot.get("Id", "")).lstrip("^")
         category = _get_module_category(item_id)
+        name = _get_module_display_name(item_id)
         if slot.get("_no_layer_tooltip"):
-            return f"{item_id}\nCategory: {category}\nGrid: ({x}, {y})"
+            return f"{name}\nCategory: {category}\nGrid: ({x}, {y})"
         return (
-            f"{item_id}\nCategory: {category}\nGrid: ({x}, {y})\n"
+            f"{name}\nCategory: {category}\nGrid: ({x}, {y})\n"
             f"Layer: {layer + 1}/{_LAYER_COUNT}\nLayer Grid: ({x}, {layer_row})"
         )
 
