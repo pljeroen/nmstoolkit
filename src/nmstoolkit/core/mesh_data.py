@@ -49,6 +49,29 @@ class Mesh:
 
 
 @dataclass(frozen=True)
+class MaterialData:
+    """PBR material properties parsed from MATERIAL.MBIN EXML."""
+
+    name: str
+    diffuse_path: str
+    normal_path: str
+    mask_path: str
+    roughness: float
+    metalness: float
+
+    @classmethod
+    def empty(cls) -> MaterialData:
+        return cls(
+            name="",
+            diffuse_path="",
+            normal_path="",
+            mask_path="",
+            roughness=0.5,
+            metalness=0.0,
+        )
+
+
+@dataclass(frozen=True)
 class SceneNode:
     """Node in a scene graph hierarchy."""
 
@@ -58,3 +81,12 @@ class SceneNode:
     geometry_ref: str
     material_ref: str
     children: Tuple[SceneNode, ...]
+
+
+@dataclass(frozen=True)
+class SceneMeshEntry:
+    """A geometry reference collected from a scene tree walk, with world transform."""
+
+    geometry_ref: str
+    material_ref: str
+    world_matrix: Tuple[float, ...]

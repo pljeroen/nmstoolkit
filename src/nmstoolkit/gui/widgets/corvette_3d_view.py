@@ -107,39 +107,65 @@ layout(location = 2) in vec2 aUV;
 
 uniform mat4 uMVP;
 uniform mat4 uModel;
+uniform mat3 uNormalMatrix;
 
+out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
 
 void main() {
+    vec4 worldPos = uModel * vec4(aPos, 1.0);
     gl_Position = uMVP * vec4(aPos, 1.0);
-    vNormal = mat3(uModel) * aNormal;
+    vWorldPos = worldPos.xyz;
+    vNormal = uNormalMatrix * aNormal;
     vUV = aUV;
 }
 """
 
 _FRAGMENT_SHADER = """\
 #version 330 core
+in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
 
 uniform sampler2D uTex;
+uniform sampler2D uNormalMap;
 uniform vec3 uTint;
 uniform vec3 uLightDir;
+uniform vec3 uViewPos;
+uniform float uAmbient;
+uniform float uShininess;
+uniform float uSpecularIntensity;
 uniform int uHasTexture;
+uniform int uHasNormalMap;
 
 out vec4 fragColor;
 
 void main() {
     vec3 n = normalize(vNormal);
-    float diff = max(dot(n, uLightDir), 0.0) * 0.7 + 0.3;
+
+    // Normal map perturbation (tangent-space approximation)
+    if (uHasNormalMap == 1) {
+        vec3 nmSample = texture(uNormalMap, vUV).rgb * 2.0 - 1.0;
+        n = normalize(n + nmSample * 0.5);
+    }
+
+    // Blinn-Phong lighting
+    float diff = max(dot(n, uLightDir), 0.0);
+
+    vec3 viewDir = normalize(uViewPos - vWorldPos);
+    vec3 halfDir = normalize(uLightDir + viewDir);
+    float spec = pow(max(dot(n, halfDir), 0.0), uShininess) * uSpecularIntensity;
+
     vec3 baseCol;
     if (uHasTexture == 1) {
         baseCol = texture(uTex, vUV).rgb;
     } else {
         baseCol = uTint;
     }
-    fragColor = vec4(baseCol * diff, 1.0);
+
+    vec3 result = baseCol * (uAmbient + diff * 0.7) + vec3(spec);
+    fragColor = vec4(result, 1.0);
 }
 """
 
@@ -238,6 +264,20 @@ def _mat4_multiply(a: List[float], b: List[float]) -> List[float]:
                 s += a[row + k * 4] * b[k + col * 4]
             result[row + col * 4] = s
     return result
+
+
+def _mat3_normal(model: List[float]) -> List[float]:
+    """Extract the upper-left 3x3 from a 4x4 column-major model matrix.
+
+    For uniform-scale models this is sufficient as the normal matrix.
+    For non-uniform scale, a proper inverse-transpose would be needed,
+    but this is acceptable for the current rendering quality target.
+    """
+    return [
+        model[0], model[1], model[2],
+        model[4], model[5], model[6],
+        model[8], model[9], model[10],
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +451,8 @@ class Corvette3DView(QOpenGLWidget):
         self._mesh_cache: Dict[str, _GpuMesh] = {}  # module_id → GPU mesh
         self._texture_cache: Dict[str, int] = {}  # module_id → GL texture ID
         self._mesh_data: Dict[str, List[Mesh]] = {}  # module_id → domain meshes
+        self._scene_transforms: Dict[str, List[List[float]]] = {}  # module_id → world matrices
+        self._normal_map_cache: Dict[str, int] = {}  # module_id → GL normal map texture ID
         self._show_grid = True
         self._layering_enabled = True
 
@@ -464,6 +506,11 @@ class Corvette3DView(QOpenGLWidget):
         # Texture upload happens in paintGL when GL context is current
         self._pending_textures = getattr(self, "_pending_textures", {})
         self._pending_textures[module_id] = png_path
+
+    def set_scene_transforms(self, module_id: str, matrices: List[List[float]]) -> None:
+        """Set scene-graph world transforms for a module type."""
+        self._scene_transforms[module_id] = matrices
+        self.update()
 
     def set_grid_visible(self, visible: bool) -> None:
         self._show_grid = bool(visible)
@@ -547,11 +594,19 @@ class Corvette3DView(QOpenGLWidget):
         GL.glUseProgram(self._shader_program)
         loc_mvp = GL.glGetUniformLocation(self._shader_program, "uMVP")
         loc_model = GL.glGetUniformLocation(self._shader_program, "uModel")
+        loc_normal_mat = GL.glGetUniformLocation(self._shader_program, "uNormalMatrix")
         loc_tint = GL.glGetUniformLocation(self._shader_program, "uTint")
         loc_light = GL.glGetUniformLocation(self._shader_program, "uLightDir")
+        loc_view_pos = GL.glGetUniformLocation(self._shader_program, "uViewPos")
+        loc_ambient = GL.glGetUniformLocation(self._shader_program, "uAmbient")
+        loc_shininess = GL.glGetUniformLocation(self._shader_program, "uShininess")
+        loc_spec_int = GL.glGetUniformLocation(self._shader_program, "uSpecularIntensity")
         loc_has_tex = GL.glGetUniformLocation(self._shader_program, "uHasTexture")
+        loc_has_nmap = GL.glGetUniformLocation(self._shader_program, "uHasNormalMap")
 
         GL.glUniform3f(loc_light, *light_dir)
+        GL.glUniform3f(loc_view_pos, *eye)
+        GL.glUniform1f(loc_ambient, 0.25)
 
         for slot in self._modules:
             idx = slot.get("Index", {})
@@ -568,14 +623,21 @@ class Corvette3DView(QOpenGLWidget):
             model = _mat4_translate(float(x), float(layer) * _LAYER_HEIGHT, float(z))
             mvp = _mat4_multiply(vp, model)
 
+            # Normal matrix = transpose of inverse of upper-left 3x3 of model
+            normal_mat = _mat3_normal(model)
+
             GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_FALSE, mvp)
             GL.glUniformMatrix4fv(loc_model, 1, GL.GL_FALSE, model)
+            GL.glUniformMatrix3fv(loc_normal_mat, 1, GL.GL_FALSE, normal_mat)
             GL.glUniform3f(loc_tint, r, g, b)
+            GL.glUniform1f(loc_shininess, 32.0)
+            GL.glUniform1f(loc_spec_int, 0.5)
 
             # Use cached mesh if available, otherwise cube fallback
             stripped_id = item_id.lstrip("^")
             gpu_mesh = self._get_or_upload_mesh(stripped_id)
             has_texture = stripped_id in self._texture_cache
+            has_normal_map = stripped_id in self._normal_map_cache
 
             if has_texture:
                 GL.glUniform1i(loc_has_tex, 1)
@@ -583,6 +645,13 @@ class Corvette3DView(QOpenGLWidget):
                 GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture_cache[stripped_id])
             else:
                 GL.glUniform1i(loc_has_tex, 0)
+
+            if has_normal_map:
+                GL.glUniform1i(loc_has_nmap, 1)
+                GL.glActiveTexture(GL.GL_TEXTURE1)
+                GL.glBindTexture(GL.GL_TEXTURE_2D, self._normal_map_cache[stripped_id])
+            else:
+                GL.glUniform1i(loc_has_nmap, 0)
 
             GL.glBindVertexArray(gpu_mesh.vao)
             GL.glDrawElements(GL.GL_TRIANGLES, gpu_mesh.index_count, GL.GL_UNSIGNED_INT, None)
