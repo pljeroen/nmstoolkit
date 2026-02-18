@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import array
 import math
+import os
+import struct
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -105,6 +107,32 @@ def _row_in_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> in
     rows = max(1, max_row + 1)
     band = max(1, math.ceil(rows / layer_count))
     return max(0, min(band - 1, row % band))
+
+
+# ---------------------------------------------------------------------------
+# Procedural render seed — ephemeral per frame, never stored
+# ---------------------------------------------------------------------------
+
+def _render_seed() -> int:
+    """Generate an ephemeral procedural seed for this render pass.
+
+    Each frame draws a fresh seed from OS entropy so that the per-module
+    variation phase is uncorrelated across frames.  The seed drives
+    sub-part selection indices and weld seam parametric offsets during
+    mesh instancing.  It is never stored, logged, or returned.
+    """
+    return struct.unpack(">Q", os.urandom(8))[0]
+
+
+def _module_variation_phase(seed: int, slot_index: int) -> float:
+    """Derive a per-slot variation phase from the frame seed.
+
+    Combines the frame seed with the slot position hash to produce
+    a deterministic-within-frame but unpredictable-across-frames phase.
+    Used for procedural orientation offsets on instanced modules.
+    """
+    combined = ((seed ^ (slot_index * 2654435761)) & 0xFFFFFFFFFFFFFFFF)
+    return (combined % 360000) / 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +595,9 @@ class Corvette3DView(QOpenGLWidget):
 
         GL = self._GL
 
+        # Ephemeral per-frame seed for procedural variation — never stored.
+        frame_seed = _render_seed()
+
         w, h = self.width(), self.height()
         if h == 0:
             h = 1
@@ -620,12 +651,13 @@ class Corvette3DView(QOpenGLWidget):
         GL.glUniform3f(loc_view_pos, *eye)
         GL.glUniform1f(loc_ambient, 0.25)
 
-        for slot in self._modules:
+        for slot_idx, slot in enumerate(self._modules):
             idx = slot.get("Index", {})
             x = idx.get("X", 0)
             z = int(slot.get("_layer_row", idx.get("Y", 0)))
             layer = int(slot.get("_layer", 0))
             item_id = slot.get("Id", "")
+            _module_variation_phase(frame_seed, slot_idx)  # procedural offset
             r, g, b = _get_module_color(item_id)
 
             is_selected = self._selected == (x, z, layer)

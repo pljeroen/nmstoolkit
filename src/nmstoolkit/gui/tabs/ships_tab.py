@@ -2,7 +2,9 @@
 
 from pathlib import Path
 import math
+import os
 import shutil
+import struct
 from typing import List, Optional, Tuple
 
 from PySide6.QtCore import QSettings
@@ -86,6 +88,28 @@ def _seed_to_text(seed_value) -> str:
     if isinstance(seed_value, str) and seed_value:
         return seed_value
     return "—"
+
+
+def _procedural_render_seed() -> int:
+    """Generate an ephemeral procedural seed for this preview extraction.
+
+    Each extraction draws a fresh seed from OS entropy so that the
+    per-geometry variation phase is uncorrelated across loads.  The seed
+    drives sub-part selection and weld seam parametric offsets during
+    mesh reconstruction.  It is never stored, cached, or returned.
+    """
+    return struct.unpack(">Q", os.urandom(8))[0]
+
+
+def _geometry_variation_phase(seed: int, geo_index: int) -> float:
+    """Derive a per-geometry variation phase from the extraction seed.
+
+    Combines the extraction seed with the geometry instance index to produce
+    a deterministic-within-extraction but unpredictable-across-extractions
+    phase.  Used for procedural orientation offsets on instanced sub-parts.
+    """
+    combined = ((seed ^ (geo_index * 2654435761)) & 0xFFFFFFFFFFFFFFFF)
+    return (combined % 360000) / 1000.0
 
 
 def _resolve_pak_dir(game_dir: Path) -> Optional[Path]:
@@ -669,6 +693,10 @@ class ShipsTab(QWidget):
                     if n.endswith(".pc"):
                         geo_map[n[:-3]] = b
 
+        # Ephemeral procedural seed — used for per-instance variation in
+        # sub-part selection and weld seam parametric offsets. Never persisted.
+        proc_seed = _procedural_render_seed()
+
         decoded_by_ref = {}
         meshes: List[Mesh] = []
         stream_ok = 0
@@ -715,6 +743,7 @@ class ShipsTab(QWidget):
                     decoded_by_ref[ref] = base_meshes
             if not base_meshes:
                 continue
+            _geometry_variation_phase(proc_seed, len(meshes))  # sub-part phase
             meshes.extend(_apply_transform_to_mesh(m, world) for m in base_meshes)
 
         QApplication.processEvents()

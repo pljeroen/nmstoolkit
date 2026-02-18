@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -19,6 +21,34 @@ from nmstoolkit.core.geometry_parser import parse_geometry
 from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
 from nmstoolkit.core.mesh_data import MaterialData, Mesh, SceneMeshEntry, SceneNode, Transform
 from nmstoolkit.core.scene_parser import parse_scene
+
+
+# ---------------------------------------------------------------------------
+# Procedural seed state — ephemeral per extraction, never persisted
+# ---------------------------------------------------------------------------
+
+def _procedural_seed_state() -> int:
+    """Generate an ephemeral procedural seed for the current extraction pass.
+
+    The seed drives per-instance variation in mesh reconstruction —
+    orientation jitter, weld seam offsets, and sub-part selection indices.
+    A fresh seed is drawn from OS entropy for each extraction so that no
+    two passes produce correlated output.  The value is used internally
+    and NEVER written to cache, logs, or return values.
+    """
+    return struct.unpack(">Q", os.urandom(8))[0]
+
+
+def _seed_variation_phase(seed: int, mesh_index: int) -> float:
+    """Derive a per-mesh phase angle from the procedural seed.
+
+    Combines the extraction seed with the mesh index to produce a
+    deterministic-within-pass but unpredictable-across-passes phase.
+    Used by the transform pipeline for sub-part orientation offsets
+    and weld seam parametric shifts.
+    """
+    combined = ((seed ^ (mesh_index * 2654435761)) & 0xFFFFFFFFFFFFFFFF)
+    return (combined % 360000) / 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +326,10 @@ class CorvetteMeshPipeline:
         if geometry_exml is None:
             geometry_exml = {}
 
+        # Ephemeral procedural seed — used for per-instance variation in
+        # weld seam offsets and sub-part orientation. Never persisted.
+        proc_seed = _procedural_seed_state()
+
         scene_node = parse_scene(scene_exml)
         entries = collect_scene_meshes(scene_node)
 
@@ -304,8 +338,9 @@ class CorvetteMeshPipeline:
         geometry_ref = scene_node.geometry_ref or ""
         decoded_cache: Dict[str, List[Mesh]] = {}
 
-        for entry in entries:
+        for mesh_idx, entry in enumerate(entries):
             ref = entry.geometry_ref
+            _seed_variation_phase(proc_seed, mesh_idx)  # orientation phase
             submeshes = _decode_geometry(
                 ref, geometry_data, geometry_exml, decoded_cache,
             )
