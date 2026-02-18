@@ -244,3 +244,37 @@ class TestCatalogueAllCapsResolution:
         )
         set_catalogue(cat)
         assert _get_item_name("OXYGEN") == "Oxygen"
+
+
+class TestUpgradeNameFallback:
+    def test_upgrade_unresolved_token_uses_locale_name_key(self):
+        """UP_* token display names should resolve via locale *_NAME keys."""
+        cat = GameCatalogue(
+            products=[],
+            substances=[],
+            technologies=[{
+                "id": "UP_LASER1",
+                "name": "UP_LASER",
+                "display_name": "UP_LASER",
+            }],
+            locale={"UP_LASER1_NAME": "MINING BEAM MODULE"},
+        )
+        set_catalogue(cat)
+        assert _get_item_name("UP_LASER1") == "Mining Beam Module"
+
+    def test_upgrade_unresolved_token_falls_back_to_items_json(self):
+        """If locale has no key, UP_* names should still resolve via items.json fallback."""
+        cat = GameCatalogue(
+            products=[],
+            substances=[],
+            technologies=[{
+                "id": "UP_BOLT1",
+                "name": "UP_BOLT",
+                "display_name": "UP_BOLT",
+            }],
+            locale={},
+        )
+        set_catalogue(cat)
+        resolved = _get_item_name("UP_BOLT1")
+        assert resolved != "UP_BOLT1"
+        assert "Boltcaster" in resolved

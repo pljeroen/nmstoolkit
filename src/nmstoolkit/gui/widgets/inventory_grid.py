@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
@@ -115,6 +116,7 @@ def _load_item_symbols():
 
 _ITEM_NAMES = None
 _ITEM_SYMBOLS = None
+_UNRESOLVED_TOKEN_RE = re.compile(r"^[A-Z0-9_#]+$")
 
 
 def _get_item_name(item_id: str) -> str:
@@ -132,26 +134,25 @@ def _get_item_name(item_id: str) -> str:
 
     # 2. Catalogue display_name (from selected game locale)
     if _CATALOGUE is not None:
+        resolved_from_item = None
         item = _CATALOGUE.find_item(item_id)
         if item is None and item_id.startswith("^"):
             item = _CATALOGUE.find_item(item_id[1:])
         if item is not None:
-            display = item.get("display_name", item.get("name", ""))
-            if display:
-                return _title_case_name(display)
+            resolved_from_item = _resolve_catalogue_item_name(item, item_id)
         # Procedural items: strip #nnnnn suffix and try base type
-        if "#" in item_id:
+        if resolved_from_item is None and "#" in item_id:
             base_id = item_id.split("#")[0]
             item = _CATALOGUE.find_item(base_id)
             if item is None and base_id.startswith("^"):
                 item = _CATALOGUE.find_item(base_id[1:])
             if item is not None:
-                display = item.get("display_name", item.get("name", ""))
-                if display:
-                    return _title_case_name(display)
+                resolved_from_item = _resolve_catalogue_item_name(item, base_id)
+        if resolved_from_item:
+            return _title_case_name(resolved_from_item)
         # Locale fallback: resolve locale keys not in product/substance/technology tables
         bare = item_id.lstrip("^")
-        locale_name = _CATALOGUE.locale.get(bare) or _CATALOGUE.locale.get(item_id)
+        locale_name = _lookup_locale_name(_CATALOGUE.locale, [bare, item_id, f"{bare}_NAME"])
         if locale_name:
             return _title_case_name(locale_name)
 
@@ -159,14 +160,9 @@ def _get_item_name(item_id: str) -> str:
     if _ITEM_NAMES is None:
         _ITEM_NAMES = _load_item_names()
 
-    name = _ITEM_NAMES.get(item_id)
+    name = _lookup_items_name(item_id)
     if name:
         return name
-    if "#" in item_id:
-        base_id = item_id.split("#")[0]
-        name = _ITEM_NAMES.get(base_id)
-        if name:
-            return name
 
     return item_id.lstrip("^") if item_id else "Empty"
 
@@ -181,6 +177,83 @@ def _title_case_name(name: str) -> str:
         return name
     # str.title() handles spaces and hyphens correctly
     return name.title()
+
+
+def _looks_unresolved_name(value: str) -> bool:
+    """True when a value looks like an untranslated game token (e.g. UP_LASER)."""
+    if not value:
+        return True
+    return bool(_UNRESOLVED_TOKEN_RE.fullmatch(value))
+
+
+def _lookup_locale_name(locale_map: dict, keys: list[str]) -> str:
+    for key in keys:
+        if not key:
+            continue
+        text = locale_map.get(key)
+        if text:
+            return text
+    return ""
+
+
+def _lookup_items_name(item_id: str) -> str:
+    global _ITEM_NAMES
+    if _ITEM_NAMES is None:
+        _ITEM_NAMES = _load_item_names()
+    if not item_id:
+        return ""
+    candidates = [item_id]
+    bare = item_id.lstrip("^")
+    if bare != item_id:
+        candidates.append(bare)
+    candidates.append("^" + bare)
+    if "#" in bare:
+        base = bare.split("#")[0]
+        candidates.extend([base, "^" + base])
+    for key in candidates:
+        name = _ITEM_NAMES.get(key)
+        if name:
+            return name
+    return ""
+
+
+def _resolve_catalogue_item_name(item: dict, source_id: str) -> str | None:
+    """Resolve item name from catalogue entry, tolerating unresolved token fields."""
+    display = item.get("display_name", "") or ""
+    item_entry_id = (item.get("id", "") or "").strip()
+    src = (source_id or "").lstrip("^")
+
+    if display and not _looks_unresolved_name(display):
+        # Curated fallback names keep hyphen/wording conventions for all-caps locale text.
+        if display.isupper():
+            curated = _lookup_items_name(src) or _lookup_items_name(item_entry_id)
+            if curated:
+                return curated
+        return display
+
+    locale = getattr(_CATALOGUE, "locale", {}) or {}
+    item_name = (item.get("name", "") or "").strip()
+    upgrade_prefixes = ("UP_", "UT_", "U_")
+    is_upgrade = src.startswith(upgrade_prefixes) or item_entry_id.startswith(upgrade_prefixes)
+    candidates = [
+        display,
+        item_name,
+        src,
+        item_entry_id,
+    ]
+    if is_upgrade:
+        candidates.extend([f"{src}_NAME", f"{item_entry_id}_NAME", f"{item_name}_NAME"])
+    locale_text = _lookup_locale_name(locale, candidates)
+    if locale_text:
+        return locale_text
+
+    # Fall back to non-empty name if it doesn't look like a raw token.
+    if item_name and not _looks_unresolved_name(item_name):
+        return item_name
+    curated = _lookup_items_name(src) or _lookup_items_name(item_entry_id)
+    if curated:
+        return curated
+    return None
 
 
 def _get_item_symbol(item_id: str) -> str:

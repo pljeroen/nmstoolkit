@@ -41,7 +41,6 @@ from nmstoolkit.core.save_scanner import SaveProfile, scan_for_profiles
 from nmstoolkit.gui.i18n import (
     apply_menu_translation,
     apply_ui_translation,
-    available_ui_languages,
     set_ui_language,
     ui_tr,
 )
@@ -365,21 +364,36 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
-        file_menu.addAction("&Open Save...", self._on_open, "Ctrl+O")
-        file_menu.addAction("Open &Account Data...", self._on_open_account)
+        file_menu.setProperty("_i18n_source_menu_title", "&File")
+        file_menu.menuAction().setProperty("_i18n_source_action_text", "&File")
+
+        open_save_action = file_menu.addAction("&Open Save...", self._on_open, "Ctrl+O")
+        open_save_action.setProperty("_i18n_source_action_text", "&Open Save...")
+        open_account_action = file_menu.addAction("Open &Account Data...", self._on_open_account)
+        open_account_action.setProperty("_i18n_source_action_text", "Open &Account Data...")
         file_menu.addSeparator()
-        file_menu.addAction("Add Save &Directory...", self._on_add_save_dir)
-        file_menu.addAction("&Rescan Saves", self._scan_saves, "Ctrl+R")
+        add_dir_action = file_menu.addAction("Add Save &Directory...", self._on_add_save_dir)
+        add_dir_action.setProperty("_i18n_source_action_text", "Add Save &Directory...")
+        rescan_action = file_menu.addAction("&Rescan Saves", self._scan_saves, "Ctrl+R")
+        rescan_action.setProperty("_i18n_source_action_text", "&Rescan Saves")
         file_menu.addSeparator()
-        file_menu.addAction("&Save", self._on_save, "Ctrl+S")
-        file_menu.addAction("Save &As...", self._on_save_as, "Ctrl+Shift+S")
+        save_action = file_menu.addAction("&Save", self._on_save, "Ctrl+S")
+        save_action.setProperty("_i18n_source_action_text", "&Save")
+        save_as_action = file_menu.addAction("Save &As...", self._on_save_as, "Ctrl+Shift+S")
+        save_as_action.setProperty("_i18n_source_action_text", "Save &As...")
         file_menu.addSeparator()
-        file_menu.addAction("&Quit", self.close, "Ctrl+Q")
+        quit_action = file_menu.addAction("&Quit", self.close, "Ctrl+Q")
+        quit_action.setProperty("_i18n_source_action_text", "&Quit")
 
         tools_menu = menu.addMenu("&Tools")
-        tools_menu.addAction("External &Dependencies...", self._on_external_deps)
+        tools_menu.setProperty("_i18n_source_menu_title", "&Tools")
+        tools_menu.menuAction().setProperty("_i18n_source_action_text", "&Tools")
+        deps_action = tools_menu.addAction("External &Dependencies...", self._on_external_deps)
+        deps_action.setProperty("_i18n_source_action_text", "External &Dependencies...")
 
         self._language_menu = menu.addMenu("&Language")
+        self._language_menu.setProperty("_i18n_source_menu_title", "&Language")
+        self._language_menu.menuAction().setProperty("_i18n_source_action_text", "&Language")
         self._language_action_group = QActionGroup(self)
         self._language_action_group.setExclusive(True)
         self._refresh_language_menu()
@@ -432,9 +446,15 @@ class MainWindow(QMainWindow):
         for action in list(self._language_action_group.actions()):
             self._language_action_group.removeAction(action)
         selected = self._selected_game_language()
-        for token in available_ui_languages():
+        tokens = list(_LANGUAGE_DISPLAY.keys())
+        installed = self._available_installed_game_languages()
+        for token in installed:
+            if token not in tokens:
+                tokens.append(token)
+        for token in tokens:
             label = _LANGUAGE_DISPLAY.get(token, token.replace("_", " ").title())
             action = self._language_menu.addAction(label)
+            action.setProperty("_i18n_source_action_text", label)
             action.setCheckable(True)
             action.setChecked(token == selected)
             action.triggered.connect(lambda checked, t=token: self._on_language_selected(t))
