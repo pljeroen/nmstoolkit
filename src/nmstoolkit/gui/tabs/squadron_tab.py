@@ -3,6 +3,7 @@
 from typing import Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QSizePolicy,
     QSplitter,
     QTabWidget,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui.preview_support import load_template_preview_meshes
+from nmstoolkit.gui.widgets.inventory_grid import get_item_display_name, get_item_icon
 
 _RANK_NAMES = {0: "Cadet", 1: "Ensign", 2: "Lieutenant", 3: "Commander", 4: "Captain"}
 
@@ -52,6 +55,14 @@ def _extract_ship_type(ship_resource: dict) -> str:
 
 def _normalize_resource_path(path: str) -> str:
     return str(path or "").replace("\\", "/").lower()
+
+
+def _seed_to_text(seed_value) -> str:
+    if isinstance(seed_value, list) and len(seed_value) >= 2:
+        return str(seed_value[1])
+    if isinstance(seed_value, str):
+        return seed_value
+    return ""
 
 
 def _extract_ship_class(ship: dict) -> str:
@@ -152,6 +163,15 @@ class SquadronTab(QWidget):
         specs_layout.addRow("Class:", self._ship_specs_class)
         self._ship_specs_dps = QLabel("—")
         specs_layout.addRow("DPS:", self._ship_specs_dps)
+        self._ship_modules_list = QListWidget()
+        self._ship_modules_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self._ship_modules_list.setFlow(QListWidget.Flow.LeftToRight)
+        self._ship_modules_list.setWrapping(True)
+        self._ship_modules_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._ship_modules_list.setMovement(QListWidget.Movement.Static)
+        self._ship_modules_list.setMaximumHeight(90)
+        self._ship_modules_list.setSpacing(6)
+        specs_layout.addRow("Modules:", self._ship_modules_list)
         top_layout.addWidget(self._specs_group, 1)
 
         right_layout = QVBoxLayout()
@@ -244,7 +264,7 @@ class SquadronTab(QWidget):
 
         # Select matching ship in combo by filename
         ship_filename = ship.get("Filename", "")
-        selected_ship_idx = self._find_ship_index_for_resource(ship_filename)
+        selected_ship_idx = self._find_ship_index_for_resource(ship_filename, ship.get("Seed", ""))
         self._ship_combo.blockSignals(True)
         if selected_ship_idx >= 0:
             combo_index = self._ship_combo.findData(selected_ship_idx)
@@ -298,11 +318,16 @@ class SquadronTab(QWidget):
             ship = pilot.get("ShipResource", {})
             if isinstance(ship, dict):
                 ship["Seed"] = seed
-                selected_ship_idx = self._find_ship_index_for_resource(ship.get("Filename", ""))
+                selected_ship_idx = self._find_ship_index_for_resource(ship.get("Filename", ""), ship.get("Seed", ""))
                 self._update_ship_specs(selected_ship_idx, ship)
                 self._update_preview(ship)
 
-    def _find_ship_index_for_resource(self, ship_filename: str) -> int:
+    def _find_ship_index_for_resource(self, ship_filename: str, ship_seed=None) -> int:
+        normalized_seed = _seed_to_text(ship_seed)
+        if normalized_seed:
+            for i, ship in enumerate(self._ships):
+                if _seed_to_text(ship.get("Seed", "")) == normalized_seed:
+                    return i
         normalized_target = _normalize_resource_path(ship_filename)
         if not normalized_target:
             return -1
@@ -328,12 +353,37 @@ class SquadronTab(QWidget):
             self._ship_specs_type.setText(ship_type)
             self._ship_specs_class.setText(ship_class)
             self._ship_specs_dps.setText(f"{damage:.0f}" if damage else "—")
+            self._update_ship_modules(ship)
             return
         resource = ship_resource.get("Filename", "") if isinstance(ship_resource, dict) else ""
         self._ship_specs_name.setText("Unlinked ship")
         self._ship_specs_type.setText(_extract_ship_type({"Filename": resource}))
         self._ship_specs_class.setText("—")
         self._ship_specs_dps.setText("—")
+        self._ship_modules_list.clear()
+
+    def _update_ship_modules(self, ship: dict) -> None:
+        self._ship_modules_list.clear()
+        tech_inventory = ship.get("Inventory_TechOnly", {}) if isinstance(ship, dict) else {}
+        slots = tech_inventory.get("Slots", []) if isinstance(tech_inventory, dict) else []
+        module_ids = []
+        for slot in slots:
+            if not isinstance(slot, dict):
+                continue
+            item_id = str(slot.get("Id", "")).strip()
+            if not item_id:
+                continue
+            if item_id in module_ids:
+                continue
+            module_ids.append(item_id)
+        for item_id in module_ids[:16]:
+            label = get_item_display_name(item_id)
+            item = QListWidgetItem(label)
+            icon = get_item_icon(item_id, size=20)
+            if icon is not None:
+                item.setIcon(QIcon(icon))
+            item.setToolTip(f"{label} ({item_id})")
+            self._ship_modules_list.addItem(item)
 
     def _ensure_preview_view(self) -> None:
         if self._preview_view is not None:

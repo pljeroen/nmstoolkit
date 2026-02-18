@@ -26,11 +26,14 @@ def _make_player_ship(
     filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
     inv_class="A",
     damage=120.0,
+    seed="0x1234",
+    tech_slots=None,
 ):
+    tech_slots = tech_slots or []
     return {
         "Name": name,
         "Resource": {"Filename": filename},
-        "Seed": "0x1234",
+        "Seed": seed,
         "Inventory": {
             "Slots": [],
             "ValidSlotIndices": [],
@@ -39,7 +42,7 @@ def _make_player_ship(
             "Height": 5,
             "BaseStatValues": [{"BaseStatID": "^SHIP_DAMAGE", "Value": damage}],
         },
-        "Inventory_TechOnly": {"Slots": [], "ValidSlotIndices": [], "Width": 10, "Height": 6},
+        "Inventory_TechOnly": {"Slots": tech_slots, "ValidSlotIndices": [], "Width": 10, "Height": 6},
         "Inventory_Cargo": {"Slots": [], "ValidSlotIndices": [], "Width": 8, "Height": 5},
     }
 
@@ -137,6 +140,27 @@ class TestSquadronTabBasics:
         tab._list.setCurrentRow(0)
         assert tab._ship_combo.currentIndex() == 1
 
+    def test_pilot_select_prefers_ship_seed_match_over_filename(self):
+        from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
+
+        pilot = _make_pilot(
+            ship_filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
+            ship_seed="0xWINGMAN",
+        )
+        psd = {
+            "SquadronPilots": [pilot],
+            "SquadronUnlockedPilotSlots": [0],
+            "ShipOwnership": [
+                _make_player_ship("Flight Leader", "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN", seed="0xLEADER"),
+                _make_player_ship("Wingman", "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN", seed="0xWINGMAN"),
+            ],
+        }
+        tab = SquadronTab()
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert tab._ship_combo.currentIndex() == 1
+        assert "Wingman" in tab._ship_combo.currentText()
+
     def test_ship_specs_panel_shows_class_and_dps(self):
         from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
 
@@ -152,3 +176,26 @@ class TestSquadronTabBasics:
         tab._list.setCurrentRow(0)
         assert "S" in tab._ship_specs_class.text()
         assert "250" in tab._ship_specs_dps.text()
+
+    def test_ship_specs_panel_lists_modules_with_tooltips(self):
+        from nmstoolkit.gui.tabs.squadron_tab import SquadronTab
+
+        psd = {
+            "SquadronPilots": [_make_pilot(ship_filename="MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN")],
+            "SquadronUnlockedPilotSlots": [0],
+            "ShipOwnership": [
+                _make_player_ship(
+                    "Alpha Fighter",
+                    "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN",
+                    tech_slots=[
+                        {"Id": "^SHIPSHIELD", "Index": {"X": 0, "Y": 0}},
+                        {"Id": "^HYPERDRIVE", "Index": {"X": 1, "Y": 0}},
+                    ],
+                ),
+            ],
+        }
+        tab = SquadronTab()
+        tab.set_data(psd)
+        tab._list.setCurrentRow(0)
+        assert tab._ship_modules_list.count() >= 2
+        assert tab._ship_modules_list.item(0).toolTip()
