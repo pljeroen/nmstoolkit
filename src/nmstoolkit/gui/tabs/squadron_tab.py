@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -69,7 +71,12 @@ class SquadronTab(QWidget):
 
         self._tabs = QTabWidget()
         general_tab = QWidget()
-        right_layout = QVBoxLayout(general_tab)
+        general_layout = QVBoxLayout(general_tab)
+        self._general_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._general_splitter.setChildrenCollapsible(False)
+        general_layout.addWidget(self._general_splitter)
+        general_top = QWidget()
+        right_layout = QVBoxLayout(general_top)
         details = QGroupBox("Pilot Details")
         det_layout = QFormLayout(details)
 
@@ -102,10 +109,11 @@ class SquadronTab(QWidget):
         right_layout.addWidget(self._slots_label)
 
         right_layout.addStretch()
+        self._general_splitter.addWidget(general_top)
         self._tabs.addTab(general_tab, "General")
 
-        self._preview_tab = QWidget()
-        preview_layout = QVBoxLayout(self._preview_tab)
+        self._preview_panel = QWidget()
+        preview_layout = QVBoxLayout(self._preview_panel)
         self._preview_identity = QLabel("Seed: —\nResource: —")
         self._preview_identity.setWordWrap(True)
         self._preview_fidelity = QLabel(
@@ -121,7 +129,9 @@ class SquadronTab(QWidget):
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
         preview_layout.addWidget(self._preview_placeholder, 1)
-        self._tabs.addTab(self._preview_tab, "Preview")
+        self._general_splitter.addWidget(self._preview_panel)
+        self._general_splitter.setStretchFactor(0, 3)
+        self._general_splitter.setStretchFactor(1, 2)
         layout.addWidget(self._tabs)
 
     def set_data(self, psd: dict):
@@ -241,12 +251,12 @@ class SquadronTab(QWidget):
         except Exception:
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
-        self._preview_view = Corvette3DView(self._preview_tab)
+        self._preview_view = Corvette3DView(self._preview_panel)
         if hasattr(self._preview_view, "set_grid_visible"):
             self._preview_view.set_grid_visible(False)
         if hasattr(self._preview_view, "set_layering_enabled"):
             self._preview_view.set_layering_enabled(False)
-        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()
 

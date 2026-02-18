@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -9,6 +10,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProgressBar,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -17,6 +20,7 @@ from PySide6.QtWidgets import (
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui.preview_support import (
+    PreviewLoadThread,
     find_scene_resource_filename,
     load_template_preview_meshes,
     resolve_vehicle_scene,
@@ -45,7 +49,13 @@ class VehiclesTab(QWidget):
         self._vehicles = []
         self._current_index = -1
         self._preview_view: Optional[QWidget] = None
+        self._preview_request_id = 0
+        self._preview_thread: Optional[PreviewLoadThread] = None
         self._build_ui()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._cancel_preview_thread()
+        super().closeEvent(event)
 
     def _build_ui(self):
         layout = QHBoxLayout(self)
@@ -86,10 +96,11 @@ class VehiclesTab(QWidget):
         self._inv_tech = InventoryGrid("Technology")
         self._inv_cargo = InventoryGrid("Cargo")
         self._inv_tabs.addTab(self._inv, "Inventory")
-        self._inv_tabs.addTab(self._inv_tech, "Technology + Effects")
-        self._inv_tabs.addTab(self._inv_cargo, "Cargo")
-        self._preview_tab = QWidget()
-        preview_layout = QVBoxLayout(self._preview_tab)
+        self._tech_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._tech_splitter.setChildrenCollapsible(False)
+        self._tech_splitter.addWidget(self._inv_tech)
+        self._preview_panel = QWidget()
+        preview_layout = QVBoxLayout(self._preview_panel)
         self._preview_identity = QLabel("Seed: —\nResource: —")
         self._preview_identity.setWordWrap(True)
         self._preview_fidelity = QLabel(
@@ -98,14 +109,24 @@ class VehiclesTab(QWidget):
         self._preview_fidelity.setWordWrap(True)
         self._preview_status = QLabel("Preview: select a vehicle")
         self._preview_status.setWordWrap(True)
+        self._preview_progress = QProgressBar()
+        self._preview_progress.setRange(0, 0)
+        self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
         self._preview_placeholder.setMinimumHeight(280)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
+        preview_layout.addWidget(self._preview_progress)
         preview_layout.addWidget(self._preview_placeholder, 1)
-        self._inv_tabs.addTab(self._preview_tab, "Preview")
+        self._tech_splitter.addWidget(self._preview_panel)
+        self._tech_splitter.setStretchFactor(0, 3)
+        self._tech_splitter.setStretchFactor(1, 2)
+        self._inv_tabs.addTab(self._tech_splitter, "Technology + Effects")
+        self._inv_tabs.addTab(self._inv_cargo, "Cargo")
+        self._tech_tab_index = self._inv_tabs.indexOf(self._tech_splitter)
+        self._inv_tabs.currentChanged.connect(self._on_tab_changed)
         self._cargo_tab_index = self._inv_tabs.indexOf(self._inv_cargo)
         layout.addWidget(self._inv_tabs)
 
@@ -165,7 +186,14 @@ class VehiclesTab(QWidget):
         cargo_inv = v.get("Inventory_Cargo", {})
         self._inv_cargo.set_inventory(cargo_inv)
         self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
-        self._update_preview(v)
+        self._update_preview(v, load_meshes=self._inv_tabs.currentIndex() == self._tech_tab_index)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._inv_tabs.currentIndex() != self._tech_tab_index:
+            return
+        vehicle = self._current_vehicle()
+        if vehicle is not None:
+            self._update_preview(vehicle, load_meshes=True)
 
     def _on_name_changed(self):
         v = self._current_vehicle()
@@ -188,19 +216,19 @@ class VehiclesTab(QWidget):
         except Exception:
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
-        self._preview_view = Corvette3DView(self._preview_tab)
+        self._preview_view = Corvette3DView(self._preview_panel)
         if hasattr(self._preview_view, "set_grid_visible"):
             self._preview_view.set_grid_visible(False)
         if hasattr(self._preview_view, "set_layering_enabled"):
             self._preview_view.set_layering_enabled(False)
-        self._preview_tab.layout().replaceWidget(self._preview_placeholder, self._preview_view)
+        self._preview_panel.layout().replaceWidget(self._preview_placeholder, self._preview_view)
         self._preview_placeholder.hide()
         self._preview_view.show()
 
     def _load_preview_meshes(self, resource_filename: str):
         return load_template_preview_meshes(resource_filename)
 
-    def _update_preview(self, vehicle: dict) -> None:
+    def _update_preview(self, vehicle: dict, *, load_meshes: bool = True) -> None:
         resource = find_scene_resource_filename(vehicle)
         if not resource:
             default_name = VEHICLE_NAMES[self._current_index] if 0 <= self._current_index < len(VEHICLE_NAMES) else ""
@@ -214,11 +242,50 @@ class VehiclesTab(QWidget):
         self._preview_fidelity.setText(
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
+        if not load_meshes:
+            self._preview_progress.setVisible(False)
+            self._preview_status.setText("Open Technology + Effects to load vehicle model.")
+            return
         if not resource:
+            self._preview_progress.setVisible(False)
             self._preview_status.setText("Preview unavailable: vehicle resource filename missing.")
             return
-        meshes, status = self._load_preview_meshes(resource)
-        if not meshes:
+        self._start_preview_load(resource)
+
+    def _start_preview_load(self, resource: str) -> None:
+        self._cancel_preview_thread()
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        self._preview_status.setText("Loading preview meshes...")
+        self._preview_progress.setVisible(True)
+        thread = PreviewLoadThread(
+            request_id=request_id,
+            resource_filename=resource,
+            loader=self._load_preview_meshes,
+            parent=self,
+        )
+        thread.completed.connect(self._on_preview_loaded)
+        thread.finished.connect(thread.deleteLater)
+        self._preview_thread = thread
+        thread.start()
+
+    def _cancel_preview_thread(self) -> None:
+        thread = self._preview_thread
+        if thread is None:
+            return
+        if thread.isRunning():
+            thread.requestInterruption()
+            thread.quit()
+            thread.wait(1000)
+        self._preview_thread = None
+
+    def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
+        if request_id != self._preview_request_id:
+            return
+        self._preview_thread = None
+        self._preview_progress.setVisible(False)
+        mesh_list = meshes if isinstance(meshes, list) else []
+        if not mesh_list:
             self._preview_status.setText(status)
             return
         self._ensure_preview_view()
@@ -231,6 +298,6 @@ class VehiclesTab(QWidget):
                 "Slots": [{"Id": "^VEHICLE_PREVIEW", "Index": {"X": 0, "Y": 0}, "_no_layer_tooltip": True}],
             }
         )
-        self._preview_view.set_mesh_data("VEHICLE_PREVIEW", meshes)
+        self._preview_view.set_mesh_data("VEHICLE_PREVIEW", mesh_list)
         self._preview_status.setText(status)
         self._preview_view.update()

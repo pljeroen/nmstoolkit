@@ -100,7 +100,9 @@ def test_vehicles_preview_tab_and_identity_refresh(monkeypatch):
     )
     tab = VehiclesTab()
     labels = [tab._inv_tabs.tabText(i) for i in range(tab._inv_tabs.count())]
-    assert "Preview" in labels
+    assert "Preview" not in labels
+    assert hasattr(tab, "_tech_splitter")
+    assert tab._tech_splitter.count() == 2
 
     psd = {
         "VehicleOwnership": [

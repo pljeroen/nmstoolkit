@@ -34,7 +34,9 @@ def test_squadron_preview_tab_and_identity(monkeypatch):
     monkeypatch.setattr(SquadronTab, "_load_preview_meshes", lambda self, r: ([], "no preview"))
     tab = SquadronTab()
     labels = [tab._tabs.tabText(i) for i in range(tab._tabs.count())]
-    assert "Preview" in labels
+    assert "Preview" not in labels
+    assert hasattr(tab, "_general_splitter")
+    assert tab._general_splitter.count() == 2
     tab.set_data(
         {
             "SquadronPilots": [_make_pilot("MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN", "0xAAAA")],
