@@ -1,6 +1,7 @@
-"""Tests for broadened corvette detection.
+"""Tests for corvette detection.
 
-R-CORV-02: Corvettes detected by model filename OR by corvette module IDs in inventory.
+R-CORV-02: Corvettes detected by BIGGS model filename (authoritative),
+with conservative module-based fallback when filename is absent.
 """
 
 import pytest
@@ -24,15 +25,15 @@ def _ship_with_filename(filename):
     }
 
 
-def _ship_with_corvette_modules():
-    """A ship with no BIGGS filename but with corvette module IDs."""
+def _ship_with_corvette_modules(filename=""):
+    """A ship with corvette module IDs and optional filename."""
     return {
-        "Resource": {"Filename": "MODELS/COMMON/SPACECRAFT/GENERIC/GENERIC.SCENE.MBIN"},
+        "Resource": {"Filename": filename},
         "Inventory": {
             "Slots": [
-                {"Id": "^B_COK_A", "Type": {"InventoryType": "Product"}},
-                {"Id": "^B_WNG_A", "Type": {"InventoryType": "Product"}},
-                {"Id": "^B_TRU_A", "Type": {"InventoryType": "Product"}},
+                {"Id": "^B_COK_A", "Type": {"InventoryType": "Technology"}},
+                {"Id": "^B_WNG_A", "Type": {"InventoryType": "Technology"}},
+                {"Id": "^B_STR_A", "Type": {"InventoryType": "Technology"}},
             ],
         },
     }
@@ -52,10 +53,15 @@ class TestCorvetteDetection:
         ship = _ship_with_filename("MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN")
         assert _is_corvette_ship(ship) is False
 
-    def test_corvette_modules_without_biggs(self, qapp):
-        """Ship with corvette modules (B_COK, B_WNG, B_TRU) should be detected."""
+    def test_corvette_modules_without_filename(self, qapp):
+        """Fallback: ship with empty filename but 3+ corvette modules (cockpit + structural) is detected."""
         ship = _ship_with_corvette_modules()
         assert _is_corvette_ship(ship) is True
+
+    def test_corvette_modules_with_non_biggs_filename_rejected(self, qapp):
+        """Non-BIGGS filename takes precedence — module fallback does not apply."""
+        ship = _ship_with_corvette_modules(filename="MODELS/COMMON/SPACECRAFT/GENERIC/GENERIC.SCENE.MBIN")
+        assert _is_corvette_ship(ship) is False
 
     def test_ship_without_resource_field(self, qapp):
         """Ship missing Resource field should not crash."""
