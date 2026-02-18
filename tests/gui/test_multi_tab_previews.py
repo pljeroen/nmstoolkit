@@ -103,6 +103,7 @@ def test_vehicles_preview_tab_and_identity_refresh(monkeypatch):
     assert "Preview" not in labels
     assert hasattr(tab, "_tech_splitter")
     assert tab._tech_splitter.count() == 2
+    assert tab._preview_placeholder.minimumHeight() == 0
 
     psd = {
         "VehicleOwnership": [

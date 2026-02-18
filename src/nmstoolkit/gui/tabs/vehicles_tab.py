@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QProgressBar,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -113,8 +114,9 @@ class VehiclesTab(QWidget):
         self._preview_progress.setRange(0, 0)
         self._preview_progress.setVisible(False)
         self._preview_placeholder = QLabel("3D preview will appear here")
-        self._preview_placeholder.setMinimumHeight(280)
+        self._preview_placeholder.setMinimumHeight(0)
         self._preview_placeholder.setStyleSheet("color: #aaa;")
+        self._preview_placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         preview_layout.addWidget(self._preview_identity)
         preview_layout.addWidget(self._preview_fidelity)
         preview_layout.addWidget(self._preview_status)
@@ -123,6 +125,7 @@ class VehiclesTab(QWidget):
         self._tech_splitter.addWidget(self._preview_panel)
         self._tech_splitter.setStretchFactor(0, 3)
         self._tech_splitter.setStretchFactor(1, 2)
+        self._tech_splitter.setSizes([700, 300])
         self._inv_tabs.addTab(self._tech_splitter, "Technology + Effects")
         self._inv_tabs.addTab(self._inv_cargo, "Cargo")
         self._tech_tab_index = self._inv_tabs.indexOf(self._tech_splitter)
@@ -217,6 +220,8 @@ class VehiclesTab(QWidget):
             self._preview_status.setText("Preview unavailable: OpenGL widget import failed.")
             return
         self._preview_view = Corvette3DView(self._preview_panel)
+        self._preview_view.setMinimumSize(0, 0)
+        self._preview_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         if hasattr(self._preview_view, "set_grid_visible"):
             self._preview_view.set_grid_visible(False)
         if hasattr(self._preview_view, "set_layering_enabled"):
