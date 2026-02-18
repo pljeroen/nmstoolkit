@@ -27,7 +27,9 @@ GITHUB_RELEASES_URL = (
     "https://api.github.com/repos/monkeyman192/MBINCompiler/releases/latest"
 )
 
-_MBIN_NAMES = ["MBINCompiler", "MBINCompiler.exe"]
+# Include all known compiler binary names so status reflects installed asset
+# names across platforms.
+_MBIN_NAMES = ["MBINCompiler", "MBINCompiler.exe", "MBINCompiler-linux"]
 
 
 def _platform_asset_names() -> List[str]:
