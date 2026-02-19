@@ -54,6 +54,9 @@ def _resolve_node(
             return node
         seen.add(normalized)
         resolved_sub = _resolve_node(sub_scene, scene_lookup, seen)
+        # Include the sub-scene root as a child (not just its children).
+        # The sub-scene root carries the GEOMETRY attribute — taking only
+        # .children would lose that geometry_ref.
         return SceneNode(
             name=node.name,
             node_type=node.node_type,
@@ -61,7 +64,7 @@ def _resolve_node(
             geometry_ref=node.geometry_ref,
             material_ref=node.material_ref,
             scene_ref=node.scene_ref,
-            children=resolved_sub.children,
+            children=(resolved_sub,),
         )
 
     resolved_children = tuple(
@@ -152,7 +155,17 @@ def _walk(
             return
 
     if node.geometry_ref:
-        out.append((node.geometry_ref, composed))
+        # Skip geometry on nodes whose REFERENCE children have been resolved
+        # (non-empty children). In NMS _PROC scenes, the root MODEL node carries
+        # a mega-geometry containing ALL parts as sub-meshes. When references are
+        # resolved, per-part geometry from sub-scenes replaces this. If references
+        # are unresolved (empty), keep the mega-geometry as fallback.
+        has_resolved_refs = any(
+            c.node_type.upper() == "REFERENCE" and c.children
+            for c in node.children
+        )
+        if not has_resolved_refs:
+            out.append((node.geometry_ref, composed))
 
     for child in node.children:
         _walk(child, composed, active_nodes, out)

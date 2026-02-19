@@ -258,21 +258,51 @@ class TestFilterSceneGeometry:
         assert "MODELS/WINGS/GEO.MBIN" not in geo_refs
         assert "MODELS/WINGS_B/GEO.MBIN" in geo_refs
 
-    def test_non_reference_geometry_always_included(self):
-        """Geometry directly in the tree (not under REFERENCE) is always included."""
+    def test_root_mega_geometry_skipped_when_references_resolved(self):
+        """Root geometry is skipped when REFERENCE children have been resolved.
+
+        In NMS _PROC scenes, the root carries a mega-geometry with ALL parts
+        as sub-meshes. When references are resolved, per-part geometry replaces
+        it. The mega-geometry must be skipped to avoid rendering all parts.
+        """
         fn = _import_filter_geometry()
         assert fn is not None
 
-        root = _node("Root", "MODEL", geometry_ref="MODELS/ROOT/GEO.MBIN", children=[
+        root = _node("Root", "MODEL", geometry_ref="MODELS/ROOT/MEGA_GEO.MBIN", children=[
             SceneNode("_WINGS_A", "REFERENCE", Transform.identity(), "", "", "",
                       (_geo_node("WingMesh", "MODELS/WINGS/GEO.MBIN"),)),
         ])
 
-        # Filter selects _WINGS_A, but root geometry should also be present
         result = fn(root, active_nodes=frozenset({"_WINGS_A"}))
         geo_refs = [ref for ref, _ in result]
-        assert "MODELS/ROOT/GEO.MBIN" in geo_refs
+        assert "MODELS/ROOT/MEGA_GEO.MBIN" not in geo_refs
         assert "MODELS/WINGS/GEO.MBIN" in geo_refs
+
+    def test_root_geometry_kept_when_references_unresolved(self):
+        """Root geometry is kept when REFERENCE children are empty (unresolved)."""
+        fn = _import_filter_geometry()
+        assert fn is not None
+
+        root = _node("Root", "MODEL", geometry_ref="MODELS/ROOT/GEO.MBIN", children=[
+            SceneNode("_WINGS_A", "REFERENCE", Transform.identity(), "", "", "", ()),
+        ])
+
+        result = fn(root, active_nodes=None)
+        geo_refs = [ref for ref, _ in result]
+        assert "MODELS/ROOT/GEO.MBIN" in geo_refs
+
+    def test_non_reference_geometry_included(self):
+        """Geometry on nodes without REFERENCE children is always collected."""
+        fn = _import_filter_geometry()
+        assert fn is not None
+
+        root = _node("Root", "MODEL", children=[
+            _geo_node("Hull", "MODELS/HULL/GEO.MBIN"),
+        ])
+
+        result = fn(root, active_nodes=None)
+        geo_refs = [ref for ref, _ in result]
+        assert "MODELS/HULL/GEO.MBIN" in geo_refs
 
     def test_collision_nodes_excluded(self):
         fn = _import_filter_geometry()
