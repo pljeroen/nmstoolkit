@@ -548,6 +548,7 @@ class SettlementsTab(QWidget):
     def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
         if request_id != self._preview_request_id:
             return
+        self._preview_thread = None
         self._preview_progress.setVisible(False)
         mesh_list = meshes if isinstance(meshes, list) else []
         if not mesh_list:

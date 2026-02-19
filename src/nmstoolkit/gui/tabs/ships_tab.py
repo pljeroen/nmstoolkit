@@ -470,7 +470,8 @@ class ShipsTab(QWidget):
         cargo_inv = ship.get("Inventory_Cargo", {})
         self._inv_cargo.set_inventory(cargo_inv)
         self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
-        if self._inv_tabs.currentWidget() is self._preview_tab:
+        cw = self._inv_tabs.currentWidget()
+        if cw is self._preview_tab:
             self._update_preview(ship)
         else:
             self._preview_progress.setVisible(False)
@@ -654,6 +655,7 @@ class ShipsTab(QWidget):
     def _on_preview_loaded(self, request_id: int, meshes: object, status: str) -> None:
         if request_id != self._preview_request_id:
             return
+        self._preview_thread = None
         self._preview_progress.setVisible(False)
         mesh_list = meshes if isinstance(meshes, list) else []
         if not mesh_list:
