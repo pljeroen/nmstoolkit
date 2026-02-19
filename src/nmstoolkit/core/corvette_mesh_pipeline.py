@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,6 +126,14 @@ def compose_world_transform(parent: Transform, child: Transform) -> List[float]:
 # Scene tree walking (R-RF-02)
 # ---------------------------------------------------------------------------
 
+_LOWER_LOD_RE = re.compile(r"LOD([1-9]\d*)$", re.IGNORECASE)
+
+
+def _is_lower_lod(name: str) -> bool:
+    """Return True if *name* ends with LOD<n> where n >= 1 (lower detail level)."""
+    return _LOWER_LOD_RE.search(name) is not None
+
+
 def collect_scene_meshes(
     node: SceneNode,
     parent_matrix: Optional[List[float]] = None,
@@ -132,7 +141,12 @@ def collect_scene_meshes(
     """Walk a SceneNode tree and collect all geometry references with world transforms.
 
     Returns a SceneMeshEntry for every node that has a non-empty geometry_ref.
+    Skips LOD1+ nodes and their entire subtrees — only LOD0 (highest detail)
+    or non-LOD-suffixed nodes are collected.
     """
+    if _is_lower_lod(node.name):
+        return []
+
     if parent_matrix is None:
         parent_matrix = _mat4_identity()
 

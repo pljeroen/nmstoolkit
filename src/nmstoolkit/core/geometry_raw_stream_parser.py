@@ -10,12 +10,15 @@ Pure domain module — stdlib only (struct, xml.etree).
 from __future__ import annotations
 
 import hashlib
+import re
 import struct
 from typing import List, Tuple
 from xml.etree.ElementTree import fromstring
 
 from nmstoolkit.core.geometry_parser import unpack_int_2_10_10_10_rev
 from nmstoolkit.core.mesh_data import Mesh
+
+_LOWER_LOD_RE = re.compile(r"LOD([1-9]\d*)$", re.IGNORECASE)
 
 
 def parse_geometry_raw_stream(geometry_exml: str, raw_data: bytes) -> List[Mesh]:
@@ -61,6 +64,8 @@ def parse_geometry_raw_stream(geometry_exml: str, raw_data: bytes) -> List[Mesh]
 
     for mesh_id, m in meta.items():
         if "COLLISION" in mesh_id.upper():
+            continue
+        if _LOWER_LOD_RE.search(mesh_id):
             continue
 
         pos_size = m["VertexPositionDataSize"]

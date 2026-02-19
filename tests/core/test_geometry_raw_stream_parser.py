@@ -405,6 +405,82 @@ class TestInvalidInput:
         assert parse_geometry_raw_stream(exml, b"\x00" * 10) == []
 
 
+class TestLodFiltering:
+    """CORVETTE-RENDER-02: parse_geometry_raw_stream skips LOD1+ StreamMetaData entries."""
+
+    def _make_two_lod_meshes(self, id_lod0="DETAILLOD0", id_lod1="DETAILLOD1"):
+        """Build raw data with two distinct triangles at different positions."""
+        positions_a = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        positions_b = [(10.0, 20.0, 30.0), (11.0, 20.0, 30.0), (10.0, 21.0, 30.0)]
+        uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+        n_packed = [_pack_int_2_10_10_10_rev(0, 0, 511)] * 3
+        t_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 3
+        indices = (0, 1, 2)
+
+        sec_a = _build_raw_stream(positions_a, uvs, n_packed, t_packed, indices)
+        sec_b = _build_raw_stream(positions_b, uvs, n_packed, t_packed, indices)
+        raw, metas = _pack_raw_file(sec_a, sec_b)
+
+        exml = _build_geometry_exml([
+            {
+                "id_string": id_lod0,
+                "pos_data_size": metas[0]["pos_data_size"],
+                "vert_data_size": metas[0]["vert_data_size"],
+                "idx_data_size": metas[0]["idx_data_size"],
+                "pos_data_offset": metas[0]["pos_data_offset"],
+                "vert_data_offset": metas[0]["vert_data_offset"],
+                "idx_data_offset": metas[0]["idx_data_offset"],
+            },
+            {
+                "id_string": id_lod1,
+                "pos_data_size": metas[1]["pos_data_size"],
+                "vert_data_size": metas[1]["vert_data_size"],
+                "idx_data_size": metas[1]["idx_data_size"],
+                "pos_data_offset": metas[1]["pos_data_offset"],
+                "vert_data_offset": metas[1]["vert_data_offset"],
+                "idx_data_offset": metas[1]["idx_data_offset"],
+            },
+        ])
+        return raw, exml
+
+    def test_lod1_entry_skipped(self):
+        """StreamMetaData entry with LOD1 suffix is skipped."""
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_lod_meshes("TOPLID", "TOPLIDLOD1")
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 1
+
+    def test_lod0_entry_kept(self):
+        """StreamMetaData entry with LOD0 suffix is kept."""
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_lod_meshes("MESHLOD0", "MESHLOD1")
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 1
+        # The LOD0 mesh should be at position (0,0,0)
+        assert meshes[0].vertices[0][0] == pytest.approx(0.0, abs=0.01)
+
+    def test_non_lod_entry_kept(self):
+        """StreamMetaData entry without LOD suffix is kept."""
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_lod_meshes("HULL_MAIN", "HULL_MAINLOD1")
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 1
+
+    def test_lod2_entry_skipped(self):
+        """LOD2 entries are also skipped."""
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_lod_meshes("DETAIL", "DETAILLOD2")
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 1
+
+    def test_lod_in_middle_not_filtered(self):
+        """Name like 'LODGING' should not be filtered."""
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_lod_meshes("LODGING", "LODGE_AREA")
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 2
+
+
 class TestDomainPurity:
     """C-ARCH-01: Parser uses stdlib only."""
 
@@ -414,7 +490,7 @@ class TestDomainPurity:
             "src/nmstoolkit/core/geometry_raw_stream_parser.py"
         ).read_text()
         tree = ast.parse(src)
-        allowed_prefixes = {"__future__", "nmstoolkit", "xml", "struct", "hashlib", "math", "typing"}
+        allowed_prefixes = {"__future__", "nmstoolkit", "xml", "struct", "hashlib", "math", "re", "typing"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:

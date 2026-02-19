@@ -15,8 +15,9 @@ import pytest
 from nmstoolkit.core.corvette_mesh_pipeline import (
     CorvetteMeshPipeline,
     MeshCacheEntry,
+    collect_scene_meshes,
 )
-from nmstoolkit.core.mesh_data import Mesh
+from nmstoolkit.core.mesh_data import Mesh, SceneNode, Transform
 
 
 # ---------------------------------------------------------------------------
@@ -257,3 +258,96 @@ class TestPipelineExtraction:
             )
             assert entry is not None
             assert entry.meshes == []
+
+
+# ---------------------------------------------------------------------------
+# LOD filtering in collect_scene_meshes (CORVETTE-RENDER-02)
+# ---------------------------------------------------------------------------
+
+def _make_scene_node(name, geometry_ref="", children=()):
+    """Helper to build a SceneNode for testing."""
+    return SceneNode(
+        name=name,
+        node_type="MESH" if geometry_ref else "REFERENCE",
+        transform=Transform.identity(),
+        geometry_ref=geometry_ref,
+        material_ref="",
+        scene_ref="",
+        children=tuple(children),
+    )
+
+
+class TestCollectSceneMeshesLodFiltering:
+    """collect_scene_meshes must skip LOD1+ scene nodes and their descendants."""
+
+    def test_lod0_node_with_geometry_kept(self):
+        """LOD0 node with geometry_ref is collected."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("PartLOD0", geometry_ref="geo_lod0.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "geo_lod0.mbin" in refs
+
+    def test_lod1_node_with_geometry_skipped(self):
+        """LOD1 node with geometry_ref is NOT collected."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("PartLOD0", geometry_ref="geo_lod0.mbin"),
+            _make_scene_node("PartLOD1", geometry_ref="geo_lod1.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "geo_lod0.mbin" in refs
+        assert "geo_lod1.mbin" not in refs
+
+    def test_lod2_subtree_fully_skipped(self):
+        """LOD2 group and all its descendants with geometry_ref are skipped."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("GroupLOD0", children=[
+                _make_scene_node("Detail", geometry_ref="detail_lod0.mbin"),
+            ]),
+            _make_scene_node("GroupLOD2", children=[
+                _make_scene_node("Detail", geometry_ref="detail_lod2.mbin"),
+            ]),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "detail_lod0.mbin" in refs
+        assert "detail_lod2.mbin" not in refs
+
+    def test_lod3_skipped(self):
+        """LOD3 node is skipped."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("MeshLOD3", geometry_ref="geo.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "geo.mbin" not in refs
+
+    def test_non_lod_node_always_kept(self):
+        """Nodes without LOD suffix are always kept."""
+        root = _make_scene_node("Root", geometry_ref="root.mbin", children=[
+            _make_scene_node("Hull", geometry_ref="hull.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "root.mbin" in refs
+        assert "hull.mbin" in refs
+
+    def test_case_insensitive_lod_matching(self):
+        """LOD suffix matching is case-insensitive."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("Partlod1", geometry_ref="geo.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "geo.mbin" not in refs
+
+    def test_lod_in_middle_of_name_not_filtered(self):
+        """A name like 'LODGING' should not be filtered — LOD must be followed by digit."""
+        root = _make_scene_node("Root", children=[
+            _make_scene_node("LODGING_AREA", geometry_ref="lodge.mbin"),
+        ])
+        entries = collect_scene_meshes(root)
+        refs = [e.geometry_ref for e in entries]
+        assert "lodge.mbin" in refs
