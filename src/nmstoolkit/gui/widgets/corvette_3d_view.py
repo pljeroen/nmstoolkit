@@ -90,6 +90,29 @@ def _get_module_color(item_id: str) -> Tuple[float, float, float]:
     return _MODULE_COLORS.get(cat, (0.4, 0.4, 0.4))
 
 
+# Module footprint (columns, rows) in the inventory grid.
+# Prefix order matters: longer prefixes must come first to avoid B_HAB matching B_HAB1.
+_MODULE_FOOTPRINTS: List[Tuple[str, Tuple[int, int]]] = [
+    ("B_COK", (1, 2)),    # Cockpit — 1×2
+    ("B_HAB1", (1, 1)),   # Access Module — 1×1 (must precede B_HAB)
+    ("B_HAB", (1, 2)),    # Habitation — 1×2
+    ("B_WNG", (1, 2)),    # Wing — 1×2
+]
+
+
+def _get_module_footprint(item_id: str) -> Tuple[int, int]:
+    """Get grid footprint (columns, rows) for a module ID.
+
+    Returns (1, 2) for multi-cell modules (cockpit, habitation, wing),
+    (1, 1) for all single-cell modules.
+    """
+    uid = item_id.lstrip("^").upper()
+    for prefix, footprint in _MODULE_FOOTPRINTS:
+        if uid.startswith(prefix):
+            return footprint
+    return (1, 1)
+
+
 def _row_to_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> int:
     """Map save-grid rows into fixed deck layers."""
     if layer_count <= 1:
@@ -406,8 +429,17 @@ def _merge_meshes(meshes: List[Mesh]) -> Mesh:
     )
 
 
-def _fit_meshes_to_cell(meshes: List[Mesh]) -> List[Mesh]:
-    """Scale/center meshes to fit one inventory cell footprint."""
+def _fit_meshes_to_cell(meshes: List[Mesh], footprint: Tuple[int, int] = (1, 1)) -> List[Mesh]:
+    """Scale/center meshes to fit their inventory cell footprint.
+
+    The footprint (columns, rows) determines the target bounding box:
+    - X axis (columns): 0.9 * footprint[0]
+    - Y axis (height): 0.9
+    - Z axis (rows): 0.9 * footprint[1]
+
+    Meshes are uniformly scaled to fit within this box while preserving
+    aspect ratio, then centered at the origin.
+    """
     if not meshes:
         return meshes
     all_verts = [v for m in meshes for v in m.vertices]
@@ -424,8 +456,23 @@ def _fit_meshes_to_cell(meshes: List[Mesh]) -> List[Mesh]:
     sx = max_x - min_x
     sy = max_y - min_y
     sz = max_z - min_z
-    max_dim = max(sx, sy, sz, 1e-6)
-    scale = 0.9 / max_dim
+
+    fw, fh = max(1, footprint[0]), max(1, footprint[1])
+    target_x = 0.9 * fw
+    target_y = 0.9
+    target_z = 0.9 * fh
+
+    # Uniform scale: fit the mesh into the target box preserving aspect ratio.
+    # Scale each axis by target/extent, take the minimum to not exceed any axis.
+    scales = []
+    if sx > 1e-6:
+        scales.append(target_x / sx)
+    if sy > 1e-6:
+        scales.append(target_y / sy)
+    if sz > 1e-6:
+        scales.append(target_z / sz)
+    scale = min(scales) if scales else 1.0
+
     cx = (min_x + max_x) * 0.5
     cy = (min_y + max_y) * 0.5
     cz = (min_z + max_z) * 0.5
@@ -537,7 +584,8 @@ class Corvette3DView(QOpenGLWidget):
 
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
-        self._mesh_data[module_id] = _fit_meshes_to_cell(meshes)
+        footprint = _get_module_footprint(module_id)
+        self._mesh_data[module_id] = _fit_meshes_to_cell(meshes, footprint=footprint)
         # Invalidate cached GPU mesh so it gets re-uploaded
         self._mesh_cache.pop(module_id, None)
 
@@ -664,7 +712,14 @@ class Corvette3DView(QOpenGLWidget):
             if is_selected:
                 r, g, b = min(1.0, r + 0.3), min(1.0, g + 0.3), min(1.0, b + 0.3)
 
-            model = _mat4_translate(float(x), float(layer) * _LAYER_HEIGHT, float(z))
+            footprint = _get_module_footprint(item_id)
+            offset_x = (footprint[0] - 1) / 2.0
+            offset_z = (footprint[1] - 1) / 2.0
+            model = _mat4_translate(
+                float(x) + offset_x,
+                float(layer) * _LAYER_HEIGHT,
+                float(z) + offset_z,
+            )
             mvp = _mat4_multiply(vp, model)
 
             # Normal matrix = transpose of inverse of upper-left 3x3 of model
@@ -750,7 +805,10 @@ class Corvette3DView(QOpenGLWidget):
             x = idx.get("X", 0)
             z = int(slot.get("_layer_row", idx.get("Y", 0)))
             layer = int(slot.get("_layer", 0))
-            p = self._project_world_to_screen(vp, (float(x), float(layer) * _LAYER_HEIGHT, float(z)))
+            footprint = _get_module_footprint(str(slot.get("Id", "")))
+            wx = float(x) + (footprint[0] - 1) / 2.0
+            wz = float(z) + (footprint[1] - 1) / 2.0
+            p = self._project_world_to_screen(vp, (wx, float(layer) * _LAYER_HEIGHT, wz))
             if p is None:
                 continue
             dx = p[0] - px

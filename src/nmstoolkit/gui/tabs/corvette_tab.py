@@ -663,10 +663,14 @@ class CorvetteTab(QWidget):
                 return
 
             # Extract geometry binaries from mesh paks (adapter I/O).
+            # Include .geometry.data.mbin files alongside .geometry.mbin
+            # so parse_geometry_raw_stream can decode real mesh data.
+            data_refs = {g.replace(".geometry.mbin", ".geometry.data.mbin")
+                         for g in required_geo_refs}
             mesh_paks = sorted(pak_dir.glob("NMSARC.Mesh*.pak"))
             geo_map: Dict[str, bytes] = {}
-            wanted = set(required_geo_refs)
-            wanted_pc = {g + ".pc" for g in required_geo_refs}
+            wanted = set(required_geo_refs) | data_refs
+            wanted_pc = {g + ".pc" for g in wanted}
 
             for mesh_pak in mesh_paks:
                 if not (wanted or wanted_pc):
