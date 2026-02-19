@@ -485,6 +485,42 @@ def _mesh_is_valid(mesh: Mesh) -> bool:
     return True
 
 
+def _resolve_scene_references(scene_root, scene_files, pak, converter, parse_scene_fn):
+    """Resolve REFERENCE nodes by loading sub-scenes from PAK.
+
+    Walks the scene tree to find REFERENCE nodes with scene_ref attributes,
+    extracts and parses each referenced sub-scene from the PAK, then calls
+    resolve_references to produce a fully-expanded tree.
+    """
+    from nmstoolkit.core.scene_resolver import resolve_references
+
+    scene_lookup = {}
+
+    def _collect_refs(node):
+        if node.node_type.upper() == "REFERENCE" and node.scene_ref:
+            normalized = _normalize_ref(node.scene_ref)
+            if normalized not in scene_lookup:
+                scene_lookup[normalized] = None  # placeholder to avoid re-processing
+                original = scene_files.get(normalized)
+                if original is not None:
+                    try:
+                        sub_bytes = pak.extract(paths=[original])[original]
+                        sub_exml = converter.convert(sub_bytes)
+                        sub_root = parse_scene_fn(sub_exml)
+                        scene_lookup[normalized] = sub_root
+                        _collect_refs(sub_root)
+                    except Exception:
+                        _log.debug("Failed to load sub-scene: %s", normalized)
+        for child in node.children:
+            _collect_refs(child)
+
+    _collect_refs(scene_root)
+    valid_lookup = {k: v for k, v in scene_lookup.items() if v is not None}
+    if not valid_lookup:
+        return scene_root
+    return resolve_references(scene_root, valid_lookup)
+
+
 def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], str]:
     try:
         from nmstoolkit.adapters.hgpak_adapter import HgpakAdapter
@@ -496,6 +532,7 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
         from nmstoolkit.core.scene_parser import parse_scene
         from nmstoolkit.core.descriptor_parser import parse_descriptor
         from nmstoolkit.core.part_selector import select_parts
+        from nmstoolkit.core.scene_resolver import filter_scene_geometry
     except Exception as exc:
         return [], f"Preview unavailable: dependency import failed ({exc})."
 
@@ -523,8 +560,13 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
             return [], "Preview unavailable: scene not found in gamefiles."
         scene_bytes = pak.extract(paths=[found_scene])[found_scene]
 
-    scene_exml = converter.convert(scene_bytes)
-    scene_root = parse_scene(scene_exml)
+        scene_exml = converter.convert(scene_bytes)
+        scene_root = parse_scene(scene_exml)
+
+        # Resolve REFERENCE nodes — load sub-scene trees from PAK
+        scene_root = _resolve_scene_references(
+            scene_root, scene_files, pak, converter, parse_scene,
+        )
 
     # Attempt to load DESCRIPTOR.MBIN for part selection filtering.
     # Descriptors live in NMSARC.Precache.pak, not EntitySceneMBIN.pak.
@@ -549,13 +591,11 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
             except Exception:
                 _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
-    instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root, active_nodes) if r]
+    instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes) if r]
     if not instances and active_nodes is not None:
         # Descriptor IDs didn't match any scene node names — fall back to all parts.
-        # This happens when the scene file is a single part (e.g. biofighter.scene.mbin)
-        # rather than the procedural root that the descriptor tree maps onto.
         active_nodes = None
-        instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
+        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root) if r]
     if not instances:
         return [], "Preview unavailable: scene contains no geometry references."
 

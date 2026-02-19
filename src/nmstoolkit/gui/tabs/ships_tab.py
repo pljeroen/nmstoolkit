@@ -674,6 +674,8 @@ class ShipsTab(QWidget):
             from nmstoolkit.core.scene_parser import parse_scene
             from nmstoolkit.core.descriptor_parser import parse_descriptor
             from nmstoolkit.core.part_selector import select_parts
+            from nmstoolkit.core.scene_resolver import filter_scene_geometry
+            from nmstoolkit.gui.preview_support import _resolve_scene_references
         except Exception as exc:
             return [], f"Preview unavailable: dependency import failed ({exc})."
 
@@ -701,14 +703,16 @@ class ShipsTab(QWidget):
                 return [], "Preview unavailable: scene not found in gamefiles."
             scene_bytes = pak.extract(paths=[found_scene])[found_scene]
 
-        scene_exml = converter.convert(scene_bytes)
-        scene_root = parse_scene(scene_exml)
+            scene_exml = converter.convert(scene_bytes)
+            scene_root = parse_scene(scene_exml)
+
+            # Resolve REFERENCE nodes — load sub-scene trees from PAK
+            scene_root = _resolve_scene_references(
+                scene_root, scene_files, pak, converter, parse_scene,
+            )
 
         # Attempt to load DESCRIPTOR.MBIN for part selection filtering.
         # Descriptors live in NMSARC.Precache.pak, not EntitySceneMBIN.pak.
-        # Scene files point to specific parts (e.g. biofighter.scene.mbin) but
-        # descriptors use _proc naming at the type root (e.g. bioship_proc.descriptor.mbin).
-        # Strategy: try exact match first, then search parent dirs for *_proc.descriptor.mbin.
         active_nodes = None
         precache_pak = pak_dir / "NMSARC.Precache.pak"
         if precache_pak.exists():
@@ -728,13 +732,11 @@ class ShipsTab(QWidget):
                 except Exception:
                     _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
-        instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root, active_nodes) if r]
+        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes) if r]
         if not instances and active_nodes is not None:
             # Descriptor IDs didn't match any scene node names — fall back to all parts.
-            # This happens when the scene file is a single part (e.g. biofighter.scene.mbin)
-            # rather than the procedural root that the descriptor tree maps onto.
             active_nodes = None
-            instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
+            instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root) if r]
         if not instances:
             return [], "Preview unavailable: scene contains no geometry references."
 

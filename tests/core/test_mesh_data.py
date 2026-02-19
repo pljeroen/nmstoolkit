@@ -95,11 +95,36 @@ class TestSceneNode:
             transform=Transform.identity(),
             geometry_ref="MODELS/TEST/GEOMETRY.MBIN",
             material_ref="MODELS/TEST/MATERIAL.MBIN",
+            scene_ref="",
             children=(),
         )
         assert node.name == "TestNode"
         assert node.node_type == "MESH"
         assert node.geometry_ref == "MODELS/TEST/GEOMETRY.MBIN"
+
+    def test_scene_ref_field(self):
+        node = SceneNode(
+            name="WingsRef",
+            node_type="REFERENCE",
+            transform=Transform.identity(),
+            geometry_ref="",
+            material_ref="",
+            scene_ref="MODELS/SHIPS/WINGS/WING_A.SCENE.MBIN",
+            children=(),
+        )
+        assert node.scene_ref == "MODELS/SHIPS/WINGS/WING_A.SCENE.MBIN"
+
+    def test_scene_ref_empty_by_default(self):
+        node = SceneNode(
+            name="Hull",
+            node_type="MESH",
+            transform=Transform.identity(),
+            geometry_ref="geo.mbin",
+            material_ref="mat.mbin",
+            scene_ref="",
+            children=(),
+        )
+        assert node.scene_ref == ""
 
     def test_immutability(self):
         node = SceneNode(
@@ -108,6 +133,7 @@ class TestSceneNode:
             transform=Transform.identity(),
             geometry_ref="",
             material_ref="",
+            scene_ref="",
             children=(),
         )
         with pytest.raises(AttributeError):
@@ -120,6 +146,7 @@ class TestSceneNode:
             transform=Transform.identity(),
             geometry_ref="geo.mbin",
             material_ref="mat.mbin",
+            scene_ref="",
             children=(),
         )
         parent = SceneNode(
@@ -128,15 +155,16 @@ class TestSceneNode:
             transform=Transform.identity(),
             geometry_ref="",
             material_ref="",
+            scene_ref="",
             children=(child,),
         )
         assert len(parent.children) == 1
         assert parent.children[0].name == "Child"
 
     def test_deep_hierarchy(self):
-        leaf = SceneNode("Leaf", "MESH", Transform.identity(), "", "", ())
-        mid = SceneNode("Mid", "LOCATOR", Transform.identity(), "", "", (leaf,))
-        root = SceneNode("Root", "MODEL", Transform.identity(), "", "", (mid,))
+        leaf = SceneNode("Leaf", "MESH", Transform.identity(), "", "", "", ())
+        mid = SceneNode("Mid", "LOCATOR", Transform.identity(), "", "", "", (leaf,))
+        root = SceneNode("Root", "MODEL", Transform.identity(), "", "", "", (mid,))
         assert root.children[0].children[0].name == "Leaf"
 
     def test_equality(self):
@@ -146,6 +174,7 @@ class TestSceneNode:
             transform=Transform.identity(),
             geometry_ref="g",
             material_ref="m",
+            scene_ref="",
             children=(),
         )
         assert SceneNode(**args) == SceneNode(**args)

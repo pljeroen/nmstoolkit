@@ -80,6 +80,7 @@ class SceneNode:
     transform: Transform
     geometry_ref: str
     material_ref: str
+    scene_ref: str
     children: Tuple[SceneNode, ...]
 
 

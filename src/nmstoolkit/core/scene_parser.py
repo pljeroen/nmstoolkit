@@ -40,7 +40,7 @@ def _parse_node(element: Element) -> SceneNode:
     name = _get_property_value(element, "Name") or ""
     node_type = _get_property_value(element, "Type") or ""
     transform = _parse_transform(element)
-    geometry_ref, material_ref = _parse_attributes(element)
+    geometry_ref, material_ref, scene_ref = _parse_attributes(element)
     children = _parse_children(element)
 
     return SceneNode(
@@ -49,6 +49,7 @@ def _parse_node(element: Element) -> SceneNode:
         transform=transform,
         geometry_ref=geometry_ref,
         material_ref=material_ref,
+        scene_ref=scene_ref,
         children=children,
     )
 
@@ -84,17 +85,18 @@ def _parse_transform(parent: Element) -> Transform:
     )
 
 
-def _parse_attributes(parent: Element) -> Tuple[str, str]:
-    """Extract GEOMETRY and MATERIAL refs from Attributes list.
+def _parse_attributes(parent: Element) -> Tuple[str, str, str]:
+    """Extract GEOMETRY, MATERIAL, and SCENEGRAPH refs from Attributes list.
 
-    Returns (geometry_ref, material_ref).
+    Returns (geometry_ref, material_ref, scene_ref).
     """
     geometry_ref = ""
     material_ref = ""
+    scene_ref = ""
 
     attrs_el = parent.find("Property[@name='Attributes']")
     if attrs_el is None:
-        return geometry_ref, material_ref
+        return geometry_ref, material_ref, scene_ref
 
     for attr in attrs_el:
         if attr.tag != "Property":
@@ -105,8 +107,10 @@ def _parse_attributes(parent: Element) -> Tuple[str, str]:
             geometry_ref = attr_value
         elif attr_name == "MATERIAL":
             material_ref = attr_value
+        elif attr_name == "SCENEGRAPH":
+            scene_ref = attr_value
 
-    return geometry_ref, material_ref
+    return geometry_ref, material_ref, scene_ref
 
 
 def _parse_children(parent: Element) -> Tuple[SceneNode, ...]:

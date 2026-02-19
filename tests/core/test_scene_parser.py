@@ -168,6 +168,74 @@ MULTI_ATTRIBUTES = """\
 </Data>
 """
 
+REFERENCE_NODE_SCENE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<Data template="TkSceneNodeData">
+  <Property name="Name" value="ProcRoot" />
+  <Property name="Type" value="MODEL" />
+  <Property name="Transform">
+    <Property name="TransX" value="0" /><Property name="TransY" value="0" /><Property name="TransZ" value="0" />
+    <Property name="RotX" value="0" /><Property name="RotY" value="0" /><Property name="RotZ" value="0" />
+    <Property name="ScaleX" value="1" /><Property name="ScaleY" value="1" /><Property name="ScaleZ" value="1" />
+  </Property>
+  <Property name="Attributes" />
+  <Property name="Children">
+    <Property value="TkSceneNodeData">
+      <Property name="Name" value="_WINGS_B3LOD0" />
+      <Property name="Type" value="REFERENCE" />
+      <Property name="Transform">
+        <Property name="TransX" value="0" /><Property name="TransY" value="1" /><Property name="TransZ" value="0" />
+        <Property name="RotX" value="0" /><Property name="RotY" value="0" /><Property name="RotZ" value="0" />
+        <Property name="ScaleX" value="1" /><Property name="ScaleY" value="1" /><Property name="ScaleZ" value="1" />
+      </Property>
+      <Property name="Attributes">
+        <Property value="TkSceneNodeAttributeData">
+          <Property name="Name" value="SCENEGRAPH" />
+          <Property name="Value" value="MODELS/SHIPS/FIGHTER/WINGS/WING_B3.SCENE.MBIN" />
+        </Property>
+      </Property>
+      <Property name="Children" />
+    </Property>
+    <Property value="TkSceneNodeData">
+      <Property name="Name" value="_COCKPITS_1" />
+      <Property name="Type" value="REFERENCE" />
+      <Property name="Transform">
+        <Property name="TransX" value="0" /><Property name="TransY" value="0" /><Property name="TransZ" value="0" />
+        <Property name="RotX" value="0" /><Property name="RotY" value="0" /><Property name="RotZ" value="0" />
+        <Property name="ScaleX" value="1" /><Property name="ScaleY" value="1" /><Property name="ScaleZ" value="1" />
+      </Property>
+      <Property name="Attributes">
+        <Property value="TkSceneNodeAttributeData">
+          <Property name="Name" value="SCENEGRAPH" />
+          <Property name="Value" value="MODELS/SHIPS/FIGHTER/COCKPITS/COCKPIT_1.SCENE.MBIN" />
+        </Property>
+      </Property>
+      <Property name="Children" />
+    </Property>
+  </Property>
+</Data>
+"""
+
+NO_SCENEGRAPH_SCENE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<Data template="TkSceneNodeData">
+  <Property name="Name" value="SimpleModel" />
+  <Property name="Type" value="MODEL" />
+  <Property name="Transform">
+    <Property name="TransX" value="0" /><Property name="TransY" value="0" /><Property name="TransZ" value="0" />
+    <Property name="RotX" value="0" /><Property name="RotY" value="0" /><Property name="RotZ" value="0" />
+    <Property name="ScaleX" value="1" /><Property name="ScaleY" value="1" /><Property name="ScaleZ" value="1" />
+  </Property>
+  <Property name="Attributes">
+    <Property value="TkSceneNodeAttributeData">
+      <Property name="Name" value="GEOMETRY" />
+      <Property name="Value" value="MODELS/TEST/GEOMETRY.MBIN" />
+    </Property>
+  </Property>
+  <Property name="Children" />
+</Data>
+"""
+
 
 class TestMinimalScene:
     def test_root_name(self):
@@ -268,3 +336,40 @@ class TestMissingFields:
         node = parse_scene(MISSING_FIELDS)
         assert node.name == "Sparse"
         assert node.node_type == "MESH"
+
+
+class TestScenegraphAttribute:
+    """R-DP02-02: SCENEGRAPH attribute extraction from REFERENCE nodes."""
+
+    def test_reference_node_has_scene_ref(self):
+        root = parse_scene(REFERENCE_NODE_SCENE)
+        wings = root.children[0]
+        assert wings.name == "_WINGS_B3LOD0"
+        assert wings.scene_ref == "MODELS/SHIPS/FIGHTER/WINGS/WING_B3.SCENE.MBIN"
+
+    def test_second_reference_node_scene_ref(self):
+        root = parse_scene(REFERENCE_NODE_SCENE)
+        cockpit = root.children[1]
+        assert cockpit.name == "_COCKPITS_1"
+        assert cockpit.scene_ref == "MODELS/SHIPS/FIGHTER/COCKPITS/COCKPIT_1.SCENE.MBIN"
+
+    def test_reference_node_type(self):
+        root = parse_scene(REFERENCE_NODE_SCENE)
+        wings = root.children[0]
+        assert wings.node_type == "REFERENCE"
+
+    def test_non_reference_node_has_empty_scene_ref(self):
+        root = parse_scene(NO_SCENEGRAPH_SCENE)
+        assert root.scene_ref == ""
+
+    def test_reference_node_transform_preserved(self):
+        root = parse_scene(REFERENCE_NODE_SCENE)
+        wings = root.children[0]
+        assert wings.transform.position == (0.0, 1.0, 0.0)
+
+    def test_existing_scenes_still_have_empty_scene_ref(self):
+        """Backward compat: scenes without SCENEGRAPH attrs have empty scene_ref."""
+        root = parse_scene(SCENE_WITH_GEOMETRY)
+        assert root.scene_ref == ""
+        hull = root.children[0]
+        assert hull.scene_ref == ""
