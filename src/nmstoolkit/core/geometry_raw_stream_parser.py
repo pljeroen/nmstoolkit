@@ -39,13 +39,22 @@ def parse_geometry_raw_stream(geometry_exml: str, raw_data: bytes) -> List[Mesh]
     except Exception:
         return []
 
-    is_16bit = _int_prop(g_root, "Indices16Bit") == 1
     vertex_layout = _parse_layout(g_root, "VertexLayout")
     position_layout = _parse_layout(g_root, "PositionVertexLayout")
 
     meta = _stream_meta_by_id(g_root)
     if not meta:
         return []
+
+    # Per-mesh data blocks in the raw file are laid out as:
+    #   [VertexData][IndexData][PositionData]
+    #
+    # VertexDataOffset and VertexPositionDataOffset are ABSOLUTE file positions.
+    # IndexDataOffset is RELATIVE to VertexDataOffset (always equals VertexDataSize
+    # because index data immediately follows vertex data in the per-mesh block).
+    #
+    # Stream index buffers are always 16-bit (the root Indices16Bit flag applies
+    # only to the combined global IndexBuffer, not the per-mesh stream data).
 
     meshes: List[Mesh] = []
     seen_hashes: set[str] = set()
@@ -59,7 +68,7 @@ def parse_geometry_raw_stream(geometry_exml: str, raw_data: bytes) -> List[Mesh]
         idx_size = m["IndexDataSize"]
         pos_offset = m["VertexPositionDataOffset"]
         vert_offset = m["VertexDataOffset"]
-        idx_offset = m["IndexDataOffset"]
+        idx_offset = m["VertexDataOffset"] + m["IndexDataOffset"]
 
         if pos_size <= 0 or idx_size <= 0:
             continue
@@ -84,7 +93,7 @@ def parse_geometry_raw_stream(geometry_exml: str, raw_data: bytes) -> List[Mesh]
 
         verts, uvs = _parse_position_stream(p_stream, position_layout)
         normals = _parse_normal_stream(v_stream, vertex_layout, len(verts))
-        indices = _parse_indices(i_stream, is_16bit)
+        indices = _parse_indices(i_stream, is_16bit=True)
 
         if not verts or not indices:
             continue

@@ -25,10 +25,9 @@ def _pack_int_2_10_10_10_rev(x: int, y: int, z: int, w: int = 0) -> int:
 
 
 def _build_raw_stream(positions, uvs, normals_packed, tangents_packed, indices, is_16bit=True):
-    """Build raw binary stream data mimicking .geometry.data.mbin layout.
+    """Build raw binary stream sections for a single mesh.
 
-    Returns (raw_bytes, pos_data_size, vertex_data_size, index_data_size).
-    Layout in raw file: [position_stream][vertex_stream][index_stream]
+    Returns (pos_bytes, vert_bytes, idx_bytes) — the three section chunks.
 
     Position stream: 16 bytes/vertex (4 half-floats pos + 4 half-floats UV)
     Vertex stream: 8 bytes/vertex (packed normal u32 + packed tangent u32)
@@ -49,8 +48,35 @@ def _build_raw_stream(positions, uvs, normals_packed, tangents_packed, indices, 
     else:
         idx_data = struct.pack(f"<{len(indices)}I", *indices)
 
-    raw = bytes(pos_data) + bytes(vert_data) + bytes(idx_data)
-    return raw, len(pos_data), len(vert_data), len(idx_data)
+    return bytes(pos_data), bytes(vert_data), bytes(idx_data)
+
+
+def _pack_raw_file(*mesh_sections):
+    """Pack mesh sections into NMS raw data layout: per-mesh [vert][idx][pos] blocks.
+
+    Each element is a (pos_bytes, vert_bytes, idx_bytes) tuple from _build_raw_stream.
+    Returns (raw_bytes, list_of_meta_dicts) with correct NMS offset semantics:
+      - VertexDataOffset: absolute file position of vertex data
+      - IndexDataOffset: relative to VertexDataOffset (= VertexDataSize)
+      - VertexPositionDataOffset: absolute file position of position data
+    """
+    raw = bytearray()
+    metas = []
+    for pos_bytes, vert_bytes, idx_bytes in mesh_sections:
+        vd_off = len(raw)
+        raw.extend(vert_bytes)
+        raw.extend(idx_bytes)
+        vpd_off = len(raw)
+        raw.extend(pos_bytes)
+        metas.append({
+            "vert_data_offset": vd_off,
+            "vert_data_size": len(vert_bytes),
+            "idx_data_offset": len(vert_bytes),  # relative to vd_off
+            "idx_data_size": len(idx_bytes),
+            "pos_data_offset": vpd_off,
+            "pos_data_size": len(pos_bytes),
+        })
+    return bytes(raw), metas
 
 
 def _build_geometry_exml(
@@ -127,17 +153,19 @@ class TestSingleTriangle:
         tangents_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 3
         indices = (0, 1, 2)
 
-        raw, pos_size, vert_size, idx_size = _build_raw_stream(
+        sections = _build_raw_stream(
             positions, uvs, normals_packed, tangents_packed, indices,
         )
+        raw, metas = _pack_raw_file(sections)
+        m = metas[0]
         exml = _build_geometry_exml([{
             "id_string": "MESH_A",
-            "pos_data_size": pos_size,
-            "vert_data_size": vert_size,
-            "idx_data_size": idx_size,
-            "pos_data_offset": 0,
-            "vert_data_offset": pos_size,
-            "idx_data_offset": pos_size + vert_size,
+            "pos_data_size": m["pos_data_size"],
+            "vert_data_size": m["vert_data_size"],
+            "idx_data_size": m["idx_data_size"],
+            "pos_data_offset": m["pos_data_offset"],
+            "vert_data_offset": m["vert_data_offset"],
+            "idx_data_offset": m["idx_data_offset"],
         }])
         return raw, exml, positions, uvs
 
@@ -206,54 +234,7 @@ class TestSingleTriangle:
 class TestMultiMesh:
     """C-FUNC-05, C-FUNC-06: Multi-mesh support with per-mesh offsets."""
 
-    def test_two_meshes_returned(self):
-        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
-
-        # Build two triangles packed sequentially
-        positions_a = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
-        positions_b = [(2.0, 0.0, 0.0), (3.0, 0.0, 0.0), (2.0, 1.0, 0.0)]
-        uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
-        n_packed = [_pack_int_2_10_10_10_rev(0, 0, 511)] * 3
-        t_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 3
-        indices = (0, 1, 2)
-
-        raw_a, pos_a, vert_a, idx_a = _build_raw_stream(
-            positions_a, uvs, n_packed, t_packed, indices,
-        )
-        raw_b, pos_b, vert_b, idx_b = _build_raw_stream(
-            positions_b, uvs, n_packed, t_packed, indices,
-        )
-
-        raw = raw_a + raw_b
-        offset_b = len(raw_a)
-
-        exml = _build_geometry_exml([
-            {
-                "id_string": "MESH_A",
-                "pos_data_size": pos_a,
-                "vert_data_size": vert_a,
-                "idx_data_size": idx_a,
-                "pos_data_offset": 0,
-                "vert_data_offset": pos_a,
-                "idx_data_offset": pos_a + vert_a,
-            },
-            {
-                "id_string": "MESH_B",
-                "pos_data_size": pos_b,
-                "vert_data_size": vert_b,
-                "idx_data_size": idx_b,
-                "pos_data_offset": offset_b,
-                "vert_data_offset": offset_b + pos_b,
-                "idx_data_offset": offset_b + pos_b + vert_b,
-            },
-        ])
-
-        meshes = parse_geometry_raw_stream(exml, raw)
-        assert len(meshes) == 2
-
-    def test_second_mesh_positions_correct(self):
-        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
-
+    def _make_two_triangles(self):
         positions_a = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
         positions_b = [(10.0, 20.0, 30.0), (11.0, 20.0, 30.0), (10.0, 21.0, 30.0)]
         uvs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
@@ -261,37 +242,41 @@ class TestMultiMesh:
         t_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 3
         indices = (0, 1, 2)
 
-        raw_a, pos_a, vert_a, idx_a = _build_raw_stream(
-            positions_a, uvs, n_packed, t_packed, indices,
-        )
-        raw_b, pos_b, vert_b, idx_b = _build_raw_stream(
-            positions_b, uvs, n_packed, t_packed, indices,
-        )
-
-        raw = raw_a + raw_b
-        offset_b = len(raw_a)
+        sec_a = _build_raw_stream(positions_a, uvs, n_packed, t_packed, indices)
+        sec_b = _build_raw_stream(positions_b, uvs, n_packed, t_packed, indices)
+        raw, metas = _pack_raw_file(sec_a, sec_b)
 
         exml = _build_geometry_exml([
             {
                 "id_string": "MESH_A",
-                "pos_data_size": pos_a,
-                "vert_data_size": vert_a,
-                "idx_data_size": idx_a,
-                "pos_data_offset": 0,
-                "vert_data_offset": pos_a,
-                "idx_data_offset": pos_a + vert_a,
+                "pos_data_size": metas[0]["pos_data_size"],
+                "vert_data_size": metas[0]["vert_data_size"],
+                "idx_data_size": metas[0]["idx_data_size"],
+                "pos_data_offset": metas[0]["pos_data_offset"],
+                "vert_data_offset": metas[0]["vert_data_offset"],
+                "idx_data_offset": metas[0]["idx_data_offset"],
             },
             {
                 "id_string": "MESH_B",
-                "pos_data_size": pos_b,
-                "vert_data_size": vert_b,
-                "idx_data_size": idx_b,
-                "pos_data_offset": offset_b,
-                "vert_data_offset": offset_b + pos_b,
-                "idx_data_offset": offset_b + pos_b + vert_b,
+                "pos_data_size": metas[1]["pos_data_size"],
+                "vert_data_size": metas[1]["vert_data_size"],
+                "idx_data_size": metas[1]["idx_data_size"],
+                "pos_data_offset": metas[1]["pos_data_offset"],
+                "vert_data_offset": metas[1]["vert_data_offset"],
+                "idx_data_offset": metas[1]["idx_data_offset"],
             },
         ])
+        return raw, exml
 
+    def test_two_meshes_returned(self):
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_triangles()
+        meshes = parse_geometry_raw_stream(exml, raw)
+        assert len(meshes) == 2
+
+    def test_second_mesh_positions_correct(self):
+        from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
+        raw, exml = self._make_two_triangles()
         meshes = parse_geometry_raw_stream(exml, raw)
         ax, ay, az = meshes[1].vertices[0]
         assert ax == pytest.approx(10.0, abs=0.01)
@@ -300,41 +285,56 @@ class TestMultiMesh:
 
 
 class TestIndexFormats:
-    """C-FUNC-04: 16-bit and 32-bit index buffer support."""
+    """C-FUNC-04: Stream data always uses 16-bit indices."""
 
-    def _make_quad_raw(self, is_16bit):
+    def _make_quad_raw(self):
         positions = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
         uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
         n_packed = [_pack_int_2_10_10_10_rev(0, 0, 511)] * 4
         t_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 4
         indices = (0, 1, 2, 0, 2, 3)
 
-        raw, pos_size, vert_size, idx_size = _build_raw_stream(
-            positions, uvs, n_packed, t_packed, indices, is_16bit=is_16bit,
+        sections = _build_raw_stream(
+            positions, uvs, n_packed, t_packed, indices, is_16bit=True,
         )
-        exml = _build_geometry_exml(
-            [{
-                "id_string": "QUAD",
-                "pos_data_size": pos_size,
-                "vert_data_size": vert_size,
-                "idx_data_size": idx_size,
-                "pos_data_offset": 0,
-                "vert_data_offset": pos_size,
-                "idx_data_offset": pos_size + vert_size,
-            }],
-            is_16bit=is_16bit,
-        )
-        return raw, exml
+        raw, metas = _pack_raw_file(sections)
+        m = metas[0]
+        return raw, m, indices
 
     def test_16bit_indices(self):
         from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
-        raw, exml = self._make_quad_raw(is_16bit=True)
+        raw, m, _ = self._make_quad_raw()
+        exml = _build_geometry_exml(
+            [{
+                "id_string": "QUAD",
+                "pos_data_size": m["pos_data_size"],
+                "vert_data_size": m["vert_data_size"],
+                "idx_data_size": m["idx_data_size"],
+                "pos_data_offset": m["pos_data_offset"],
+                "vert_data_offset": m["vert_data_offset"],
+                "idx_data_offset": m["idx_data_offset"],
+            }],
+            is_16bit=True,
+        )
         meshes = parse_geometry_raw_stream(exml, raw)
         assert meshes[0].indices == (0, 1, 2, 0, 2, 3)
 
-    def test_32bit_indices(self):
+    def test_indices16bit_flag_ignored_for_stream(self):
+        """Stream data is always 16-bit regardless of root Indices16Bit flag."""
         from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
-        raw, exml = self._make_quad_raw(is_16bit=False)
+        raw, m, _ = self._make_quad_raw()
+        exml = _build_geometry_exml(
+            [{
+                "id_string": "QUAD",
+                "pos_data_size": m["pos_data_size"],
+                "vert_data_size": m["vert_data_size"],
+                "idx_data_size": m["idx_data_size"],
+                "pos_data_offset": m["pos_data_offset"],
+                "vert_data_offset": m["vert_data_offset"],
+                "idx_data_offset": m["idx_data_offset"],
+            }],
+            is_16bit=False,  # EXML says 32-bit, but stream data is 16-bit
+        )
         meshes = parse_geometry_raw_stream(exml, raw)
         assert meshes[0].indices == (0, 1, 2, 0, 2, 3)
 
@@ -351,17 +351,19 @@ class TestCollisionFiltering:
         t_packed = [_pack_int_2_10_10_10_rev(511, 0, 0)] * 3
         indices = (0, 1, 2)
 
-        raw, pos_size, vert_size, idx_size = _build_raw_stream(
+        sections = _build_raw_stream(
             positions, uvs, n_packed, t_packed, indices,
         )
+        raw, metas = _pack_raw_file(sections)
+        m = metas[0]
         exml = _build_geometry_exml([{
             "id_string": "COLLISION",
-            "pos_data_size": pos_size,
-            "vert_data_size": vert_size,
-            "idx_data_size": idx_size,
-            "pos_data_offset": 0,
-            "vert_data_offset": pos_size,
-            "idx_data_offset": pos_size + vert_size,
+            "pos_data_size": m["pos_data_size"],
+            "vert_data_size": m["vert_data_size"],
+            "idx_data_size": m["idx_data_size"],
+            "pos_data_offset": m["pos_data_offset"],
+            "vert_data_offset": m["vert_data_offset"],
+            "idx_data_offset": m["idx_data_offset"],
         }])
 
         meshes = parse_geometry_raw_stream(exml, raw)
@@ -379,8 +381,8 @@ class TestInvalidInput:
             "vert_data_size": 24,
             "idx_data_size": 6,
             "pos_data_offset": 0,
-            "vert_data_offset": 48,
-            "idx_data_offset": 72,
+            "vert_data_offset": 0,
+            "idx_data_offset": 0,
         }])
         assert parse_geometry_raw_stream(exml, b"") == []
 
@@ -396,8 +398,8 @@ class TestInvalidInput:
             "vert_data_size": 24,
             "idx_data_size": 6,
             "pos_data_offset": 0,
-            "vert_data_offset": 48,
-            "idx_data_offset": 72,
+            "vert_data_offset": 0,
+            "idx_data_offset": 0,
         }])
         # Only 10 bytes — far too short
         assert parse_geometry_raw_stream(exml, b"\x00" * 10) == []

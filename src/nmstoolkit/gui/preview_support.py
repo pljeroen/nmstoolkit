@@ -706,7 +706,10 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
                 except Exception:
                     pass
             if not base_meshes:
-                binary_meshes = parse_geometry(geo_bytes)
+                try:
+                    binary_meshes = parse_geometry(geo_bytes)
+                except Exception:
+                    binary_meshes = []
                 if binary_meshes:
                     base_meshes = [m for m in binary_meshes if _mesh_is_valid(m)]
                     if base_meshes:
