@@ -181,13 +181,20 @@ def _combine_transform(parent: Transform, local: Transform) -> Transform:
     )
 
 
-def _scene_geometry_instances(scene_root) -> list[tuple[str, Transform]]:
+def _scene_geometry_instances(scene_root, active_nodes=None) -> list[tuple[str, Transform]]:
     out: list[tuple[str, Transform]] = []
 
     def walk(node, world: Transform):
         composed = _combine_transform(world, node.transform)
-        # Skip collision geometry for visual preview.
-        if node.geometry_ref and str(node.node_type).upper() != "COLLISION":
+        node_type_upper = str(node.node_type).upper()
+        if node_type_upper == "COLLISION":
+            return
+        # If descriptor filtering is active, skip nodes not in the selected set.
+        # Structural nodes (those without geometry) are always traversed.
+        if active_nodes is not None and node.name and node.geometry_ref:
+            if node.name not in active_nodes:
+                return
+        if node.geometry_ref:
             out.append((node.geometry_ref, composed))
         for child in node.children:
             walk(child, composed)
@@ -632,6 +639,8 @@ class ShipsTab(QWidget):
             from nmstoolkit.core.geometry_raw_stream_parser import parse_geometry_raw_stream
             from nmstoolkit.core.geometry_stream_exml_parser import parse_geometry_stream_exml
             from nmstoolkit.core.scene_parser import parse_scene
+            from nmstoolkit.core.descriptor_parser import parse_descriptor
+            from nmstoolkit.core.part_selector import select_parts
         except Exception as exc:
             return [], f"Preview unavailable: dependency import failed ({exc})."
 
@@ -661,7 +670,26 @@ class ShipsTab(QWidget):
 
         scene_exml = converter.convert(scene_bytes)
         scene_root = parse_scene(scene_exml)
-        instances = [( _normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
+
+        # Attempt to load DESCRIPTOR.MBIN for part selection filtering.
+        active_nodes = None
+        descriptor_path = scene_path.replace(".scene.mbin", ".descriptor.mbin")
+        if descriptor_path != scene_path:
+            descriptor_bytes = None
+            with HgpakAdapter.from_path(scene_pak) as pak:
+                found_desc = scene_files.get(descriptor_path)
+                if found_desc:
+                    descriptor_bytes = pak.extract(paths=[found_desc])[found_desc]
+            if descriptor_bytes is not None:
+                try:
+                    desc_exml = converter.convert(descriptor_bytes)
+                    descriptor = parse_descriptor(desc_exml)
+                    if descriptor.options:
+                        active_nodes = select_parts(descriptor)
+                except Exception:
+                    pass
+
+        instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root, active_nodes) if r]
         if not instances:
             return [], "Preview unavailable: scene contains no geometry references."
 
@@ -769,7 +797,8 @@ class ShipsTab(QWidget):
             fidelity = "mixed geometry render"
         else:
             fidelity = "fallback geometry render"
+        parts_info = "descriptor filtered" if active_nodes is not None else "all parts"
         return meshes, (
-            f"Preview loaded ({len(meshes)} meshes; {fidelity}; "
+            f"Preview loaded ({len(meshes)} meshes; {fidelity}; {parts_info}; "
             f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok})."
         )
