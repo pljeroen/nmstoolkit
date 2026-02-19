@@ -8,6 +8,14 @@
 [![Release](https://img.shields.io/github/v/release/pljeroen/nmstoolkit?include_prereleases&label=release)](https://github.com/pljeroen/nmstoolkit/releases)
 [![Status: Experimental](https://img.shields.io/badge/status-experimental-orange.svg)]()
 
+![Screenshot 1](docs/pics/Screenshot%20from%202026-02-19%2020-42-43.png)
+![Screenshot 2](docs/pics/Screenshot%20from%202026-02-19%2020-44-35.png)
+![Screenshot 3](docs/pics/Screenshot%20from%202026-02-19%2020-45-13.png)
+![Screenshot 4](docs/pics/Screenshot%20from%202026-02-19%2020-46-32.png)
+![Screenshot 5](docs/pics/Screenshot%20from%202026-02-19%2020-47-06.png)
+
+This project is written by Claude and Codex and directed by Jeroen.
+
 > **WARNING: This software is experimental and under active development.**
 > **Always back up your save files before using this tool.**
 > **Saves are located in `%APPDATA%/HelloGames/NMS/` (Windows) or `~/.local/share/Steam/steamapps/compatdata/275850/` (Linux/Proton).**
