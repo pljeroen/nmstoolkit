@@ -19,6 +19,13 @@ from nmstoolkit.paths import external_tools_dir
 
 _log = logging.getLogger(__name__)
 
+# --- Resource safety limits ---
+MAX_REF_DEPTH = 8          # Max recursion depth for sub-scene reference resolution
+MAX_REF_SCENES = 64        # Max sub-scenes to resolve per preview load
+MAX_INSTANCES = 200        # Max geometry instances per preview load
+MAX_TOTAL_VERTICES = 2_000_000  # Total vertex budget across all meshes
+MAX_VERTICES_PER_MESH = 500_000  # Per-mesh vertex sanity cap
+
 
 class PreviewLoadThread(QThread):
     """Runs mesh loading in a worker thread and returns results to the UI thread."""
@@ -42,7 +49,8 @@ class PreviewLoadThread(QThread):
             meshes, status = self._loader(self._resource_filename)
         except Exception as exc:
             meshes, status = [], f"Preview unavailable: load failed ({exc})."
-        self.completed.emit(self._request_id, meshes, status)
+        if not self.isInterruptionRequested():
+            self.completed.emit(self._request_id, meshes, status)
 
 
 def seed_to_text(seed_value) -> str:
@@ -480,24 +488,36 @@ def _find_descriptor(scene_path: str, precache_files: dict, pak) -> object:
 def _mesh_is_valid(mesh: Mesh) -> bool:
     if mesh.vertex_count == 0 or mesh.index_count == 0:
         return False
+    if mesh.vertex_count > MAX_VERTICES_PER_MESH:
+        return False
     if max(mesh.indices, default=-1) >= mesh.vertex_count:
         return False
     return True
 
 
-def _resolve_scene_references(scene_root, scene_files, pak, converter, parse_scene_fn):
+def _resolve_scene_references(
+    scene_root, scene_files, pak, converter, parse_scene_fn,
+    max_depth=MAX_REF_DEPTH, max_scenes=MAX_REF_SCENES,
+):
     """Resolve REFERENCE nodes by loading sub-scenes from PAK.
 
     Walks the scene tree to find REFERENCE nodes with scene_ref attributes,
     extracts and parses each referenced sub-scene from the PAK, then calls
     resolve_references to produce a fully-expanded tree.
+
+    Enforces resource limits: max recursion depth and max sub-scene count.
     """
     from nmstoolkit.core.scene_resolver import resolve_references
 
     scene_lookup = {}
+    scene_count = [0]
 
-    def _collect_refs(node):
+    def _collect_refs(node, depth=0):
+        if depth >= max_depth or scene_count[0] >= max_scenes:
+            return
         if node.node_type.upper() == "REFERENCE" and node.scene_ref:
+            if scene_count[0] >= max_scenes:
+                return
             normalized = _normalize_ref(node.scene_ref)
             if normalized not in scene_lookup:
                 scene_lookup[normalized] = None  # placeholder to avoid re-processing
@@ -508,17 +528,22 @@ def _resolve_scene_references(scene_root, scene_files, pak, converter, parse_sce
                         sub_exml = converter.convert(sub_bytes)
                         sub_root = parse_scene_fn(sub_exml)
                         scene_lookup[normalized] = sub_root
-                        _collect_refs(sub_root)
+                        scene_count[0] += 1
+                        _collect_refs(sub_root, depth + 1)
                     except Exception:
                         _log.debug("Failed to load sub-scene: %s", normalized)
         for child in node.children:
-            _collect_refs(child)
+            if scene_count[0] >= max_scenes:
+                break
+            _collect_refs(child, depth + 1)
 
     _collect_refs(scene_root)
+    if scene_count[0] >= max_scenes:
+        _log.info("Sub-scene limit reached (%d), some references unresolved", max_scenes)
     valid_lookup = {k: v for k, v in scene_lookup.items() if v is not None}
     if not valid_lookup:
         return scene_root
-    return resolve_references(scene_root, valid_lookup)
+    return resolve_references(scene_root, valid_lookup, max_depth=max_depth, max_scenes=max_scenes)
 
 
 def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], str]:
@@ -591,11 +616,12 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
             except Exception:
                 _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
-    instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes) if r]
+    instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes, max_instances=MAX_INSTANCES) if r]
     if not instances and active_nodes is not None:
         # Descriptor IDs didn't match any scene node names — fall back to all parts.
         active_nodes = None
-        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root) if r]
+        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, max_instances=MAX_INSTANCES) if r]
+    truncated = len(instances) >= MAX_INSTANCES
     if not instances:
         return [], "Preview unavailable: scene contains no geometry references."
 
@@ -634,10 +660,14 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
 
     decoded_by_ref = {}
     meshes: List[Mesh] = []
+    total_vertices = 0
     stream_ok = 0
     binary_ok = 0
     fallback_ok = 0
     for ref, world in instances:
+        if total_vertices >= MAX_TOTAL_VERTICES:
+            truncated = True
+            break
         base_meshes = decoded_by_ref.get(ref)
         if base_meshes is None:
             base_meshes = []
@@ -691,7 +721,12 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
         if not base_meshes:
             continue
         _geometry_variation_phase(proc_seed, len(meshes))  # sub-part phase
-        meshes.extend(_apply_transform_to_mesh(m, world) for m in base_meshes)
+        for m in base_meshes:
+            if total_vertices + m.vertex_count > MAX_TOTAL_VERTICES:
+                truncated = True
+                break
+            meshes.append(_apply_transform_to_mesh(m, world))
+            total_vertices += m.vertex_count
 
     QApplication.processEvents()
     if not meshes:
@@ -704,7 +739,8 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
     else:
         fidelity = "fallback geometry render"
     parts_info = "descriptor filtered" if active_nodes is not None else "all parts"
+    limit_info = "; truncated" if truncated else ""
     return meshes, (
         f"Preview loaded ({len(meshes)} meshes; {fidelity}; {parts_info}; "
-        f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok})."
+        f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok}{limit_info})."
     )

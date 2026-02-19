@@ -343,7 +343,18 @@ class FossilsTab(QWidget):
             return
         self._start_preview_load(resource)
 
+    def _cancel_preview_thread(self) -> None:
+        thread = self._preview_thread
+        if thread is None:
+            return
+        if thread.isRunning():
+            thread.requestInterruption()
+            thread.quit()
+            thread.wait(1000)
+        self._preview_thread = None
+
     def _start_preview_load(self, resource: str) -> None:
+        self._cancel_preview_thread()
         self._preview_request_id += 1
         request_id = self._preview_request_id
         self._preview_status.setText("Loading preview meshes...")

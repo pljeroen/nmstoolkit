@@ -27,7 +27,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nmstoolkit.gui.preview_support import PreviewLoadThread, configure_preview_view
+from nmstoolkit.gui.preview_support import (
+    MAX_INSTANCES,
+    MAX_REF_DEPTH,
+    MAX_REF_SCENES,
+    MAX_TOTAL_VERTICES,
+    PreviewLoadThread,
+    _mesh_is_valid,
+    _resolve_scene_references,
+    configure_preview_view,
+)
 from nmstoolkit.gui.widgets.inventory_grid import InventoryGrid
 from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
@@ -259,13 +268,6 @@ def _find_descriptor(scene_path: str, precache_files: dict, pak) -> object:
         search_dir = search_dir.rsplit("/", 1)[0] if "/" in search_dir else ""
     return None
 
-
-def _mesh_is_valid(mesh: Mesh) -> bool:
-    if mesh.vertex_count == 0 or mesh.index_count == 0:
-        return False
-    if max(mesh.indices, default=-1) >= mesh.vertex_count:
-        return False
-    return True
 
 
 class ShipsTab(QWidget):
@@ -622,7 +624,18 @@ class ShipsTab(QWidget):
             return
         self._start_preview_load(resource)
 
+    def _cancel_preview_thread(self) -> None:
+        thread = self._preview_thread
+        if thread is None:
+            return
+        if thread.isRunning():
+            thread.requestInterruption()
+            thread.quit()
+            thread.wait(1000)
+        self._preview_thread = None
+
     def _start_preview_load(self, resource: str) -> None:
+        self._cancel_preview_thread()
         self._preview_request_id += 1
         request_id = self._preview_request_id
         self._preview_status.setText("Loading preview meshes...")
@@ -675,7 +688,6 @@ class ShipsTab(QWidget):
             from nmstoolkit.core.descriptor_parser import parse_descriptor
             from nmstoolkit.core.part_selector import select_parts
             from nmstoolkit.core.scene_resolver import filter_scene_geometry
-            from nmstoolkit.gui.preview_support import _resolve_scene_references
         except Exception as exc:
             return [], f"Preview unavailable: dependency import failed ({exc})."
 
@@ -732,11 +744,12 @@ class ShipsTab(QWidget):
                 except Exception:
                     _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
-        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes) if r]
+        instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, active_nodes, max_instances=MAX_INSTANCES) if r]
         if not instances and active_nodes is not None:
             # Descriptor IDs didn't match any scene node names — fall back to all parts.
             active_nodes = None
-            instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root) if r]
+            instances = [(_normalize_ref(r), t) for r, t in filter_scene_geometry(scene_root, max_instances=MAX_INSTANCES) if r]
+        truncated = len(instances) >= MAX_INSTANCES
         if not instances:
             return [], "Preview unavailable: scene contains no geometry references."
 
@@ -775,10 +788,14 @@ class ShipsTab(QWidget):
 
         decoded_by_ref = {}
         meshes: List[Mesh] = []
+        total_vertices = 0
         stream_ok = 0
         binary_ok = 0
         fallback_ok = 0
         for ref, world in instances:
+            if total_vertices >= MAX_TOTAL_VERTICES:
+                truncated = True
+                break
             base_meshes = decoded_by_ref.get(ref)
             if base_meshes is None:
                 base_meshes = []
@@ -832,7 +849,12 @@ class ShipsTab(QWidget):
             if not base_meshes:
                 continue
             _geometry_variation_phase(proc_seed, len(meshes))  # sub-part phase
-            meshes.extend(_apply_transform_to_mesh(m, world) for m in base_meshes)
+            for m in base_meshes:
+                if total_vertices + m.vertex_count > MAX_TOTAL_VERTICES:
+                    truncated = True
+                    break
+                meshes.append(_apply_transform_to_mesh(m, world))
+                total_vertices += m.vertex_count
 
         QApplication.processEvents()
         if not meshes:
@@ -845,7 +867,8 @@ class ShipsTab(QWidget):
         else:
             fidelity = "fallback geometry render"
         parts_info = "descriptor filtered" if active_nodes is not None else "all parts"
+        limit_info = "; truncated" if truncated else ""
         return meshes, (
             f"Preview loaded ({len(meshes)} meshes; {fidelity}; {parts_info}; "
-            f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok})."
+            f"stream={stream_ok}, binary={binary_ok}, fallback={fallback_ok}{limit_info})."
         )
