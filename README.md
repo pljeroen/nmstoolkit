@@ -28,6 +28,7 @@ The project uses compact tags in docs/changelog entries to make review scope cle
 - Squadron management with pilot ship selection from player's owned ships
 - Frigate fleet management
 - 3D corvette builder with game mesh rendering (PyOpenGL)
+- 3D entity preview with randomized part selection from game descriptors
 - Settlement editing with seed-based ownership, stat write-back, production output, perks, race/address/buildings
 - Base part budget table with per-base part counts, wire counts, and sortable columns
 - Base library — save, browse, and swap bases from a persistent local library
@@ -47,6 +48,10 @@ The project uses compact tags in docs/changelog entries to make review scope cle
 - Raw JSON editor for direct save data manipulation
 - Game icon extraction and corvette model extraction from PAK files
 - Drag-and-drop inventory slot management with adjacency optimization
+
+> **No seed-accurate rendering.** 3D previews use randomized part selection, not seed-based.
+> The NMS modding community deliberately keeps the seed-to-parts mapping private to protect
+> the seed-hunting community. This project follows the same approach — see [nms.center](https://nms.center).
 
 ## Installation
 
