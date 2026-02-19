@@ -73,6 +73,28 @@ class TestSelectPartsNested:
         assert result == frozenset({"BODY_A", "DETAIL_X", "RED"})
 
 
+class TestSelectPartsSyntheticRoot:
+    """Synthetic root (from multi-group descriptor) selects from each child group."""
+
+    def test_selects_from_each_group(self):
+        wings = _group("WINGS", _opt("W_A"), _opt("W_B"))
+        engine = _group("ENGINE", _opt("E_A"))
+        # Synthetic root: each option has empty id and one child group
+        root = _group(
+            "ROOT",
+            DescriptorOption(id="", chance=0.0, children=(wings,)),
+            DescriptorOption(id="", chance=0.0, children=(engine,)),
+        )
+        for _ in range(20):
+            result = select_parts(root)
+            # Empty-id synthetic option is in result (harmless)
+            # One wing option selected + the single engine option
+            wing_ids = result & {"W_A", "W_B"}
+            engine_ids = result & {"E_A"}
+            assert len(wing_ids) == 1
+            assert len(engine_ids) == 1
+
+
 class TestSelectPartsEmpty:
     """Empty descriptor returns empty set."""
 

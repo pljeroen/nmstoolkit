@@ -1,5 +1,6 @@
 """Ships editor tab — ownership list, inventories, seed/type/class."""
 
+import logging
 from pathlib import Path
 import math
 import os
@@ -32,6 +33,8 @@ from nmstoolkit.gui.widgets.seed_editor import SeedEditor
 from nmstoolkit.gui import vault
 from nmstoolkit.paths import external_tools_dir
 from nmstoolkit.core.mesh_data import Mesh, Transform
+
+_log = logging.getLogger(__name__)
 
 _INV_CLASSES = ["C", "B", "A", "S"]
 
@@ -225,6 +228,36 @@ def _apply_transform_to_mesh(mesh: Mesh, transform: Transform) -> Mesh:
         uvs=mesh.uvs,
         indices=mesh.indices,
     )
+
+
+def _find_descriptor(scene_path: str, precache_files: dict, pak) -> object:
+    """Find the DESCRIPTOR.MBIN for a scene path in the Precache PAK.
+
+    Tries exact match first (scene.mbin → descriptor.mbin), then searches
+    parent directories for *_proc.descriptor.mbin files since NMS descriptors
+    use _proc naming at the type root level.
+    """
+    # Try exact match
+    exact = scene_path.replace(".scene.mbin", ".descriptor.mbin")
+    if exact != scene_path and exact in precache_files:
+        return pak.extract(paths=[precache_files[exact]])[precache_files[exact]]
+
+    # Search parent directories for *_proc.descriptor.mbin
+    parts = scene_path.rsplit("/", 1)
+    search_dir = parts[0] if len(parts) > 1 else ""
+    # Walk up at most 3 levels
+    for _ in range(3):
+        if not search_dir:
+            break
+        prefix = search_dir + "/"
+        for key, orig in precache_files.items():
+            if key.startswith(prefix) and key.endswith("_proc.descriptor.mbin"):
+                # Only match if descriptor is directly in this directory
+                remainder = key[len(prefix):]
+                if "/" not in remainder:
+                    return pak.extract(paths=[orig])[orig]
+        search_dir = search_dir.rsplit("/", 1)[0] if "/" in search_dir else ""
+    return None
 
 
 def _mesh_is_valid(mesh: Mesh) -> bool:
@@ -672,24 +705,36 @@ class ShipsTab(QWidget):
         scene_root = parse_scene(scene_exml)
 
         # Attempt to load DESCRIPTOR.MBIN for part selection filtering.
+        # Descriptors live in NMSARC.Precache.pak, not EntitySceneMBIN.pak.
+        # Scene files point to specific parts (e.g. biofighter.scene.mbin) but
+        # descriptors use _proc naming at the type root (e.g. bioship_proc.descriptor.mbin).
+        # Strategy: try exact match first, then search parent dirs for *_proc.descriptor.mbin.
         active_nodes = None
-        descriptor_path = scene_path.replace(".scene.mbin", ".descriptor.mbin")
-        if descriptor_path != scene_path:
-            descriptor_bytes = None
-            with HgpakAdapter.from_path(scene_pak) as pak:
-                found_desc = scene_files.get(descriptor_path)
-                if found_desc:
-                    descriptor_bytes = pak.extract(paths=[found_desc])[found_desc]
+        precache_pak = pak_dir / "NMSARC.Precache.pak"
+        if precache_pak.exists():
+            try:
+                with HgpakAdapter.from_path(precache_pak) as pak:
+                    precache_files = {_normalize_ref(f): f for f in pak.list_files()}
+                    descriptor_bytes = _find_descriptor(scene_path, precache_files, pak)
+            except Exception:
+                descriptor_bytes = None
             if descriptor_bytes is not None:
                 try:
                     desc_exml = converter.convert(descriptor_bytes)
                     descriptor = parse_descriptor(desc_exml)
                     if descriptor.options:
                         active_nodes = select_parts(descriptor)
+                        _log.debug("Descriptor parts selected: %s", active_nodes)
                 except Exception:
-                    pass
+                    _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
         instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root, active_nodes) if r]
+        if not instances and active_nodes is not None:
+            # Descriptor IDs didn't match any scene node names — fall back to all parts.
+            # This happens when the scene file is a single part (e.g. biofighter.scene.mbin)
+            # rather than the procedural root that the descriptor tree maps onto.
+            active_nodes = None
+            instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
         if not instances:
             return [], "Preview unavailable: scene contains no geometry references."
 

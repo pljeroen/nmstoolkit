@@ -451,6 +451,32 @@ def _apply_transform_to_mesh(mesh: Mesh, transform: Transform) -> Mesh:
     )
 
 
+def _find_descriptor(scene_path: str, precache_files: dict, pak) -> object:
+    """Find the DESCRIPTOR.MBIN for a scene path in the Precache PAK.
+
+    Tries exact match first (scene.mbin → descriptor.mbin), then searches
+    parent directories for *_proc.descriptor.mbin files since NMS descriptors
+    use _proc naming at the type root level.
+    """
+    exact = scene_path.replace(".scene.mbin", ".descriptor.mbin")
+    if exact != scene_path and exact in precache_files:
+        return pak.extract(paths=[precache_files[exact]])[precache_files[exact]]
+
+    parts = scene_path.rsplit("/", 1)
+    search_dir = parts[0] if len(parts) > 1 else ""
+    for _ in range(3):
+        if not search_dir:
+            break
+        prefix = search_dir + "/"
+        for key, orig in precache_files.items():
+            if key.startswith(prefix) and key.endswith("_proc.descriptor.mbin"):
+                remainder = key[len(prefix):]
+                if "/" not in remainder:
+                    return pak.extract(paths=[orig])[orig]
+        search_dir = search_dir.rsplit("/", 1)[0] if "/" in search_dir else ""
+    return None
+
+
 def _mesh_is_valid(mesh: Mesh) -> bool:
     if mesh.vertex_count == 0 or mesh.index_count == 0:
         return False
@@ -501,16 +527,18 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
     scene_root = parse_scene(scene_exml)
 
     # Attempt to load DESCRIPTOR.MBIN for part selection filtering.
-    # Derive path: replace .SCENE.MBIN with .DESCRIPTOR.MBIN
+    # Descriptors live in NMSARC.Precache.pak, not EntitySceneMBIN.pak.
+    # Scene files point to specific parts but descriptors use _proc naming
+    # at the type root level — _find_descriptor handles the search.
     active_nodes: Optional[FrozenSet[str]] = None
-    descriptor_path = scene_path.replace(".scene.mbin", ".descriptor.mbin")
-    if descriptor_path != scene_path:
-        descriptor_bytes = None
-        # Search the same EntitySceneMBIN PAK first
-        with HgpakAdapter.from_path(scene_pak) as pak:
-            found_desc = scene_files.get(descriptor_path)
-            if found_desc:
-                descriptor_bytes = pak.extract(paths=[found_desc])[found_desc]
+    precache_pak = pak_dir / "NMSARC.Precache.pak"
+    if precache_pak.exists():
+        try:
+            with HgpakAdapter.from_path(precache_pak) as pak:
+                precache_files = {_normalize_ref(f): f for f in pak.list_files()}
+                descriptor_bytes = _find_descriptor(scene_path, precache_files, pak)
+        except Exception:
+            descriptor_bytes = None
         if descriptor_bytes is not None:
             try:
                 desc_exml = converter.convert(descriptor_bytes)
@@ -519,9 +547,15 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
                     active_nodes = select_parts(descriptor)
                     _log.debug("Descriptor parts selected: %s", active_nodes)
             except Exception:
-                _log.debug("Descriptor parse failed for %s, showing all parts", descriptor_path)
+                _log.debug("Descriptor parse failed for %s, showing all parts", scene_path)
 
     instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root, active_nodes) if r]
+    if not instances and active_nodes is not None:
+        # Descriptor IDs didn't match any scene node names — fall back to all parts.
+        # This happens when the scene file is a single part (e.g. biofighter.scene.mbin)
+        # rather than the procedural root that the descriptor tree maps onto.
+        active_nodes = None
+        instances = [(_normalize_ref(r), t) for r, t in _scene_geometry_instances(scene_root) if r]
     if not instances:
         return [], "Preview unavailable: scene contains no geometry references."
 
@@ -589,62 +623,6 @@ def load_template_preview_meshes(resource_filename: str) -> Tuple[List[object], 
                         decoded_by_ref[ref] = base_meshes
                 except Exception:
                     pass
-                if not base_meshes:
-                    # DIAGNOSTIC: understand .data.mbin file structure
-                    import sys
-                    print(f"[DIAG] ref={ref}", file=sys.stderr)
-                    print(f"[DIAG] geo_exml len={len(geo_exml)}, data_bytes len={len(data_bytes)}", file=sys.stderr)
-                    print(f"[DIAG] data[:64]={data_bytes[:64].hex()}", file=sys.stderr)
-                    try:
-                        from xml.etree.ElementTree import fromstring as _xs
-                        _gr = _xs(geo_exml)
-                        _ma = _gr.find("Property[@name='StreamMetaDataArray']")
-                        if _ma is not None:
-                            # Compute total buffer sizes from all meshes
-                            total_vert = 0
-                            total_pos = 0
-                            max_vert_end = 0
-                            max_pos_end = 0
-                            for _me in _ma.findall("Property"):
-                                _vs = int(_me.find("Property[@name='VertexDataSize']").get("value", "0"))
-                                _ps = int(_me.find("Property[@name='VertexPositionDataSize']").get("value", "0"))
-                                _is = int(_me.find("Property[@name='IndexDataSize']").get("value", "0"))
-                                _vo = int(_me.find("Property[@name='VertexDataOffset']").get("value", "0"))
-                                _po = int(_me.find("Property[@name='VertexPositionDataOffset']").get("value", "0"))
-                                total_vert += _vs + _is
-                                total_pos += _ps
-                                max_vert_end = max(max_vert_end, _vo + _vs + _is)
-                                max_pos_end = max(max_pos_end, _po + _ps)
-                            print(f"[DIAG] total_vert_idx={total_vert} total_pos={total_pos}", file=sys.stderr)
-                            print(f"[DIAG] max_vert_end={max_vert_end} max_pos_end={max_pos_end}", file=sys.stderr)
-                            print(f"[DIAG] file_size={len(data_bytes)}", file=sys.stderr)
-                            print(f"[DIAG] file - max_pos_end = {len(data_bytes) - max_pos_end}", file=sys.stderr)
-                            print(f"[DIAG] file - (max_vert_end + max_pos_end) = {len(data_bytes) - max_vert_end - max_pos_end}", file=sys.stderr)
-                            # Try to find where position data starts by checking half-float patterns
-                            # Scan at a few candidate header sizes
-                            first_me = _ma.findall("Property")[0]
-                            first_po = int(first_me.find("Property[@name='VertexPositionDataOffset']").get("value", "0"))
-                            first_ps = int(first_me.find("Property[@name='VertexPositionDataSize']").get("value", "0"))
-                            first_vo = int(first_me.find("Property[@name='VertexDataOffset']").get("value", "0"))
-                            import struct as _st
-                            for hdr_skip in (0, 16, 32, 48, 64, 128):
-                                # Check if vert data buffer at file start + hdr_skip makes sense
-                                probe_off = hdr_skip + first_vo
-                                if probe_off + 8 <= len(data_bytes):
-                                    sample = data_bytes[probe_off:probe_off+8]
-                                    print(f"[DIAG] hdr={hdr_skip} vert@{probe_off}: {sample.hex()}", file=sys.stderr)
-                            # Check if position data lives at max_vert_end offset
-                            for base in (max_vert_end, max_vert_end + 16, max_vert_end + 32):
-                                probe_off = base + first_po
-                                if probe_off + 16 <= len(data_bytes):
-                                    sample = data_bytes[probe_off:probe_off+16]
-                                    try:
-                                        x, y, z, w = _st.unpack_from("<4e", sample, 0)
-                                        print(f"[DIAG] pos_base={base} pos@{probe_off}: {sample.hex()} → xyz=({x:.3f},{y:.3f},{z:.3f})", file=sys.stderr)
-                                    except Exception:
-                                        print(f"[DIAG] pos_base={base} pos@{probe_off}: {sample.hex()} (unpack fail)", file=sys.stderr)
-                    except Exception as _de:
-                        print(f"[DIAG] error: {_de}", file=sys.stderr)
             # Fallback: try MBINCompiler conversion of stream data
             if not base_meshes and geo_exml and data_bytes is not None:
                 try:

@@ -32,8 +32,21 @@ def select_parts(descriptor: DescriptorGroup) -> FrozenSet[str]:
 
 
 def _walk(group: DescriptorGroup, rng: random.Random, selected: set[str]) -> None:
-    """Recursively walk the descriptor tree, selecting one option per group."""
+    """Recursively walk the descriptor tree, selecting one option per group.
+
+    When all options have empty ids (synthetic root wrapping independent
+    groups), walk ALL options — they represent independent part slots,
+    not alternatives to pick from.
+    """
     if not group.options:
+        return
+
+    all_empty = all(opt.id == "" for opt in group.options)
+    if all_empty:
+        # Synthetic root: each option wraps an independent group
+        for opt in group.options:
+            for child_group in opt.children:
+                _walk(child_group, rng, selected)
         return
 
     weights = [opt.chance if opt.chance > 0 else 1.0 for opt in group.options]
