@@ -392,27 +392,125 @@ class TestMulticellOffset:
 
 
 class TestLayerMapping:
-    def test_row_to_layer_three_bands(self):
-        assert _row_to_layer(0, 11) == 2
-        assert _row_to_layer(3, 11) == 2
-        assert _row_to_layer(4, 11) == 1
-        assert _row_to_layer(7, 11) == 1
-        assert _row_to_layer(8, 11) == 0
-        assert _row_to_layer(11, 11) == 0
+    """GRID-GEOMETRY-01: Layer mapping uses grid_height, not max_row."""
 
-    def test_set_modules_assigns_layer_field(self):
+    def test_row_to_layer_uses_grid_height(self):
+        """_row_to_layer accepts grid_height (total rows) and computes deterministic layers."""
+        # grid_height=12: band = ceil(12/3) = 4
+        # rows 0-3 → raw layer 0 → inverted layer 2
+        # rows 4-7 → raw layer 1 → inverted layer 1
+        # rows 8-11 → raw layer 2 → inverted layer 0
+        assert _row_to_layer(0, 12) == 2
+        assert _row_to_layer(3, 12) == 2
+        assert _row_to_layer(4, 12) == 1
+        assert _row_to_layer(7, 12) == 1
+        assert _row_to_layer(8, 12) == 0
+        assert _row_to_layer(11, 12) == 0
+
+    def test_row_to_layer_grid_height_16(self):
+        """grid_height=16: band = ceil(16/3) = 6."""
+        # rows 0-5 → layer 2, rows 6-11 → layer 1, rows 12-15 → layer 0
+        assert _row_to_layer(0, 16) == 2
+        assert _row_to_layer(5, 16) == 2
+        assert _row_to_layer(6, 16) == 1
+        assert _row_to_layer(11, 16) == 1
+        assert _row_to_layer(12, 16) == 0
+        assert _row_to_layer(15, 16) == 0
+
+    def test_row_to_layer_grid_height_6(self):
+        """grid_height=6 (completed corvette): band = ceil(6/3) = 2."""
+        # rows 0-1 → layer 2, rows 2-3 → layer 1, rows 4-5 → layer 0
+        assert _row_to_layer(0, 6) == 2
+        assert _row_to_layer(1, 6) == 2
+        assert _row_to_layer(2, 6) == 1
+        assert _row_to_layer(3, 6) == 1
+        assert _row_to_layer(4, 6) == 0
+        assert _row_to_layer(5, 6) == 0
+
+    def test_no_layer_overlap_for_grid_height_16(self):
+        """No two distinct rows in grid_height=16 share the same (layer, layer_row)."""
+        from nmstoolkit.gui.widgets.corvette_3d_view import _row_in_layer
+        seen = set()
+        for row in range(16):
+            pair = (_row_to_layer(row, 16), _row_in_layer(row, 16))
+            assert pair not in seen, f"row {row} duplicates (layer, layer_row) = {pair}"
+            seen.add(pair)
+
+    def test_set_modules_uses_grid_height_not_max_row(self):
+        """set_modules with Height=16 must give same layers regardless of occupied rows."""
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+
+        # Only rows 0-5 occupied, but Height=16 → band = ceil(16/3) = 6
+        view = Corvette3DView()
+        inv_sparse = {
+            "Width": 10, "Height": 16,
+            "Slots": [
+                {"Id": "^B_CON_A", "Index": {"X": 1, "Y": 1}},
+                {"Id": "^B_CON_A", "Index": {"X": 2, "Y": 5}},
+            ],
+        }
+        view.set_modules(inv_sparse)
+        layers_sparse = [int(s.get("_layer", -1)) for s in view._modules]
+
+        # Full grid populated, Height=16 → same band
+        view2 = Corvette3DView()
+        inv_full = {
+            "Width": 10, "Height": 16,
+            "Slots": [
+                {"Id": "^B_CON_A", "Index": {"X": 1, "Y": 1}},
+                {"Id": "^B_CON_A", "Index": {"X": 2, "Y": 5}},
+                {"Id": "^B_CON_A", "Index": {"X": 3, "Y": 12}},
+            ],
+        }
+        view2.set_modules(inv_full)
+        # First two slots must have identical layer assignments
+        layers_full = [int(s.get("_layer", -1)) for s in view2._modules]
+        assert layers_sparse[0] == layers_full[0], "Row 1 layer changed with different occupancy"
+        assert layers_sparse[1] == layers_full[1], "Row 5 layer changed with different occupancy"
+
+    def test_set_modules_layer_rows_from_grid_height(self):
+        """_layer_rows must be ceil(grid_height/3) regardless of max_row."""
         from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
 
         view = Corvette3DView()
         inv = {
-            "Width": 10,
-            "Height": 16,
+            "Width": 10, "Height": 16,
+            "Slots": [{"Id": "^B_CON_A", "Index": {"X": 1, "Y": 3}}],  # max_row=3
+        }
+        view.set_modules(inv)
+        # layer_rows must be ceil(16/3) = 6, NOT ceil(4/3) = 2
+        assert view._layer_rows == 6
+
+    def test_set_modules_assigns_layer_field(self):
+        """Modules at rows 1, 6, 13 with Height=16 land in layers 2, 1, 0.
+
+        grid_height=16, band=ceil(16/3)=6:
+        rows 0-5 → layer 2, rows 6-11 → layer 1, rows 12-15 → layer 0.
+        """
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+
+        view = Corvette3DView()
+        inv = {
+            "Width": 10, "Height": 16,
             "Slots": [
                 {"Id": "^B_WNG_A", "Index": {"X": 1, "Y": 1}},
                 {"Id": "^B_CON_A", "Index": {"X": 1, "Y": 6}},
-                {"Id": "^B_SHL_A", "Index": {"X": 1, "Y": 10}},
+                {"Id": "^B_SHL_A", "Index": {"X": 1, "Y": 13}},
             ],
         }
         view.set_modules(inv)
         layers = [int(s.get("_layer", -1)) for s in view._modules]
         assert layers == [2, 1, 0]
+
+    def test_set_modules_camera_target_uses_grid_height(self):
+        """Camera target Z must be layer_rows/2 where layer_rows = ceil(grid_height/3)."""
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+
+        view = Corvette3DView()
+        inv = {
+            "Width": 10, "Height": 16,
+            "Slots": [{"Id": "^B_CON_A", "Index": {"X": 1, "Y": 0}}],
+        }
+        view.set_modules(inv)
+        # layer_rows = ceil(16/3) = 6, camera target Z should be 6/2.0 = 3.0
+        assert view._cam_target[2] == pytest.approx(3.0)

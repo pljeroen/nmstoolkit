@@ -113,22 +113,32 @@ def _get_module_footprint(item_id: str) -> Tuple[int, int]:
     return (1, 1)
 
 
-def _row_to_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> int:
-    """Map save-grid rows into fixed deck layers."""
+def _row_to_layer(row: int, grid_height: int, layer_count: int = _LAYER_COUNT) -> int:
+    """Map save-grid rows into fixed deck layers.
+
+    Args:
+        row: Row index in the inventory grid (0-based).
+        grid_height: Total row count from inventory Height (NOT max_row).
+        layer_count: Number of vertical deck layers.
+    """
     if layer_count <= 1:
         return 0
-    rows = max(1, max_row + 1)
-    band = max(1, math.ceil(rows / layer_count))
+    band = max(1, math.ceil(max(1, grid_height) / layer_count))
     layer = max(0, min(layer_count - 1, row // band))
     if _INVERT_LAYER_ORDER:
         layer = (layer_count - 1) - layer
     return layer
 
 
-def _row_in_layer(row: int, max_row: int, layer_count: int = _LAYER_COUNT) -> int:
-    """Return local row coordinate inside the selected layer grid."""
-    rows = max(1, max_row + 1)
-    band = max(1, math.ceil(rows / layer_count))
+def _row_in_layer(row: int, grid_height: int, layer_count: int = _LAYER_COUNT) -> int:
+    """Return local row coordinate inside the selected layer grid.
+
+    Args:
+        row: Row index in the inventory grid (0-based).
+        grid_height: Total row count from inventory Height (NOT max_row).
+        layer_count: Number of vertical deck layers.
+    """
+    band = max(1, math.ceil(max(1, grid_height) / layer_count))
     return max(0, min(band - 1, row % band))
 
 
@@ -551,18 +561,15 @@ class Corvette3DView(QOpenGLWidget):
         self._grid_width = inventory.get("Width", 10)
         self._grid_height = inventory.get("Height", 16)
         slots = [s for s in inventory.get("Slots", []) if s.get("Id", "")]
-        max_row = 0
-        for slot in slots:
-            idx = slot.get("Index", {})
-            max_row = max(max_row, int(idx.get("Y", 0)))
-        self._layer_rows = max(1, math.ceil(max(1, max_row + 1) / _LAYER_COUNT))
+        gh = max(1, self._grid_height)
+        self._layer_rows = max(1, math.ceil(gh / _LAYER_COUNT))
         self._modules = []
         for slot in slots:
             idx = slot.get("Index", {})
             row = int(idx.get("Y", 0))
             if self._layering_enabled:
-                layer = _row_to_layer(row, max_row)
-                layer_row = _row_in_layer(row, max_row)
+                layer = _row_to_layer(row, gh)
+                layer_row = _row_in_layer(row, gh)
             else:
                 layer = 0
                 layer_row = row
