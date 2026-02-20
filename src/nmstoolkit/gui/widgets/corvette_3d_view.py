@@ -722,7 +722,7 @@ class Corvette3DView(QOpenGLWidget):
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
         if self._is_3d_mode:
-            self._mesh_data[module_id] = _center_meshes(meshes)
+            self._mesh_data[module_id] = meshes
         else:
             footprint = _get_module_footprint(module_id)
             self._mesh_data[module_id] = _fit_meshes_to_cell(

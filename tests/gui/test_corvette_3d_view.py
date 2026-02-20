@@ -790,7 +790,7 @@ class TestViewportScaleConstant:
 
 
 class TestMeshDataScaling3d:
-    """In 3D mode, set_mesh_data centers meshes at origin without scaling."""
+    """In 3D mode, set_mesh_data stores meshes as-is (no centering, no scaling)."""
 
     def _make_view(self):
         from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
@@ -827,8 +827,8 @@ class TestMeshDataScaling3d:
         assert max(ys) - min(ys) == pytest.approx(3.0, abs=0.01)
         assert max(zs) - min(zs) == pytest.approx(12.0, abs=0.01)
 
-    def test_3d_mode_centers_at_origin(self):
-        """Mesh should be centered at origin for correct anchor positioning."""
+    def test_3d_mode_preserves_raw_vertices(self):
+        """In 3D mode, mesh vertices are stored as-is (no centering)."""
         view = self._make_view()
         view.set_modules_3d([
             {"ObjectID": "^B_HAB_C", "Position": [0.0, 3.0, -3.0]},
@@ -837,12 +837,10 @@ class TestMeshDataScaling3d:
         view.set_mesh_data("B_HAB_C", [mesh])
         stored = view._mesh_data["B_HAB_C"]
         all_verts = [v for m in stored for v in m.vertices]
-        cx = (max(v[0] for v in all_verts) + min(v[0] for v in all_verts)) / 2
-        cy = (max(v[1] for v in all_verts) + min(v[1] for v in all_verts)) / 2
-        cz = (max(v[2] for v in all_verts) + min(v[2] for v in all_verts)) / 2
-        assert cx == pytest.approx(0.0, abs=0.01)
-        assert cy == pytest.approx(0.0, abs=0.01)
-        assert cz == pytest.approx(0.0, abs=0.01)
+        # Vertices should be unchanged — not centered
+        assert (0.0, 0.0, 0.0) in all_verts
+        assert (6.0, 0.0, 0.0) in all_verts
+        assert (6.0, 3.0, 12.0) in all_verts
 
     def test_2d_mode_still_uses_fit_to_cell(self):
         """In 2D mode (draft), set_mesh_data fits to 0.9 cell size."""
