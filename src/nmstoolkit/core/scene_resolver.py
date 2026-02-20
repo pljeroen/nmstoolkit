@@ -188,16 +188,20 @@ def _walk(
             return
 
     if node.geometry_ref:
-        # Skip geometry on nodes whose REFERENCE children have been resolved
-        # (non-empty children). In NMS _PROC scenes, the root MODEL node carries
-        # a mega-geometry containing ALL parts as sub-meshes. When references are
-        # resolved, per-part geometry from sub-scenes replaces this. If references
-        # are unresolved (empty), keep the mega-geometry as fallback.
-        has_resolved_refs = any(
-            c.node_type.upper() == "REFERENCE" and c.children
-            for c in node.children
-        )
-        if not has_resolved_refs:
+        # In NMS _PROC scenes with descriptor filtering (active_nodes is set),
+        # the root MODEL node carries a mega-geometry containing ALL parts as
+        # sub-meshes. When references are resolved, per-part geometry from
+        # sub-scenes replaces this. Skip the mega-geometry in that case.
+        # For non-procedural scenes (frigates, freighters) where active_nodes
+        # is None, always include parent geometry.
+        skip = False
+        if active_nodes is not None:
+            has_resolved_refs = any(
+                c.node_type.upper() == "REFERENCE" and c.children
+                for c in node.children
+            )
+            skip = has_resolved_refs
+        if not skip:
             out.append((node.geometry_ref, composed))
 
     for child in node.children:

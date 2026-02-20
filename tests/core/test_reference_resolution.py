@@ -291,6 +291,26 @@ class TestFilterSceneGeometry:
         geo_refs = [ref for ref, _ in result]
         assert "MODELS/ROOT/GEO.MBIN" in geo_refs
 
+    def test_parent_geometry_kept_without_descriptor_filter(self):
+        """Parent geometry is kept when active_nodes=None, even with resolved refs.
+
+        Non-procedural scenes (frigates, freighters) have no descriptor filter.
+        Their root/parent geometry must NOT be skipped, even when REFERENCE
+        children have been resolved (have non-empty children).
+        """
+        fn = _import_filter_geometry()
+        assert fn is not None
+
+        root = _node("Root", "MODEL", geometry_ref="MODELS/FRIGATE/GEO.MBIN", children=[
+            SceneNode("_HULL_A", "REFERENCE", Transform.identity(), "", "", "",
+                      (_geo_node("HullMesh", "MODELS/HULL/GEO.MBIN"),)),
+        ])
+
+        result = fn(root, active_nodes=None)
+        geo_refs = [ref for ref, _ in result]
+        assert "MODELS/FRIGATE/GEO.MBIN" in geo_refs
+        assert "MODELS/HULL/GEO.MBIN" in geo_refs
+
     def test_non_reference_geometry_included(self):
         """Geometry on nodes without REFERENCE children is always collected."""
         fn = _import_filter_geometry()
