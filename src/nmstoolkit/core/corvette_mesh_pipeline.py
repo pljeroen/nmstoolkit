@@ -123,6 +123,70 @@ def compose_world_transform(parent: Transform, child: Transform) -> List[float]:
 
 
 # ---------------------------------------------------------------------------
+# Mesh filtering — reject LOD hulls, collision proxies, distant duplicates
+# ---------------------------------------------------------------------------
+
+
+def _filter_junk_meshes(meshes: List[Mesh]) -> List[Mesh]:
+    """Filter out non-visual sub-meshes from extracted geometry.
+
+    Removes distant LOD duplicates, collision proxy volumes, and oversized
+    LOD hulls while preserving actual renderable geometry.
+
+    Returns original list if all meshes would be filtered (safety fallback).
+    """
+    if len(meshes) <= 1:
+        return meshes
+
+    _CENTER_LIMIT = 8.0
+    _LOW_VERT_THRESHOLD = 50
+    _VOLUME_THRESHOLD = 50.0
+    _DIM_LIMIT = 7.0
+    _DETAIL_VERT_THRESHOLD = 500
+
+    filtered: List[Mesh] = []
+    for m in meshes:
+        verts = m.vertices
+        n = len(verts)
+        if n == 0:
+            continue
+
+        xs = [v[0] for v in verts]
+        ys = [v[1] for v in verts]
+        zs = [v[2] for v in verts]
+
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        min_z, max_z = min(zs), max(zs)
+
+        cx = (min_x + max_x) * 0.5
+        cy = (min_y + max_y) * 0.5
+        cz = (min_z + max_z) * 0.5
+
+        # R1: Reject distant duplicates (center > 8 units from origin)
+        if abs(cx) > _CENTER_LIMIT or abs(cy) > _CENTER_LIMIT or abs(cz) > _CENTER_LIMIT:
+            continue
+
+        sx = max_x - min_x
+        sy = max_y - min_y
+        sz = max_z - min_z
+        volume = sx * sy * sz
+
+        # R2: Reject collision proxies (few vertices, large volume)
+        if n < _LOW_VERT_THRESHOLD and volume > _VOLUME_THRESHOLD:
+            continue
+
+        # R3: Reject oversized LOD hulls (any dim > 7 with low vertex count)
+        if max(sx, sy, sz) > _DIM_LIMIT and n < _DETAIL_VERT_THRESHOLD:
+            continue
+
+        filtered.append(m)
+
+    # R4: Safety fallback — never return empty
+    return filtered if filtered else meshes
+
+
+# ---------------------------------------------------------------------------
 # Scene tree walking (R-RF-02)
 # ---------------------------------------------------------------------------
 
@@ -383,6 +447,8 @@ class CorvetteMeshPipeline:
                 baked = _apply_world_matrix(submesh, list(entry.world_matrix))
                 meshes.append(baked)
                 world_transforms.append(list(entry.world_matrix))
+
+        meshes = _filter_junk_meshes(meshes)
 
         result = MeshCacheEntry(
             module_id=module_id,

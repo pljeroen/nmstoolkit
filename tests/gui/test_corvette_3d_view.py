@@ -39,6 +39,7 @@ from nmstoolkit.gui.widgets.corvette_3d_view import (
     _normalize,
     _row_to_layer,
 )
+from nmstoolkit.core.corvette_mesh_pipeline import _filter_junk_meshes
 from nmstoolkit.gui.tabs.corvette_tab import (
     CorvetteTab,
     _extract_hull_modules_3d,
@@ -959,3 +960,149 @@ class TestSetModules3dOrientation:
         mod = view._modules[0]
         assert mod["_render_pos"] == pytest.approx((6.0, 3.0, -9.0))
         assert mod["_3d_world_pos"] == pytest.approx((6.0, 3.0, -9.0))
+
+
+# ---------------------------------------------------------------------------
+# Mesh filtering — reject LOD hulls, collision proxies, distant duplicates
+# ---------------------------------------------------------------------------
+
+def _make_mesh(xs, ys, zs):
+    """Build a minimal Mesh from X/Y/Z coordinate ranges (2 verts per range)."""
+    verts = []
+    for x in xs:
+        for y in ys:
+            for z in zs:
+                verts.append((float(x), float(y), float(z)))
+    n = len(verts)
+    normals = [(0.0, 1.0, 0.0)] * n
+    uvs = [(0.0, 0.0)] * n
+    indices = list(range(min(n, 3)))  # at least one triangle
+    return Mesh(
+        vertices=tuple(verts),
+        normals=tuple(normals),
+        uvs=tuple(uvs),
+        indices=tuple(indices),
+    )
+
+
+def _make_mesh_n(n_verts, x_range, y_range, z_range):
+    """Build a Mesh with exactly n_verts vertices spread across given ranges."""
+    import random
+    rng = random.Random(42)
+    verts = []
+    for _ in range(n_verts):
+        verts.append((
+            rng.uniform(x_range[0], x_range[1]),
+            rng.uniform(y_range[0], y_range[1]),
+            rng.uniform(z_range[0], z_range[1]),
+        ))
+    normals = [(0.0, 1.0, 0.0)] * n_verts
+    uvs = [(0.0, 0.0)] * n_verts
+    indices = list(range(min(n_verts, 3)))
+    return Mesh(
+        vertices=tuple(verts),
+        normals=tuple(normals),
+        uvs=tuple(uvs),
+        indices=tuple(indices),
+    )
+
+
+class TestFilterJunkMeshes:
+    """Tests for _filter_junk_meshes — R1-R4."""
+
+    # --- R1: Reject distant duplicates (center > 8 from origin) ---
+
+    def test_keeps_mesh_centered_at_origin(self):
+        """Normal mesh near origin is kept."""
+        m = _make_mesh([-3, 3], [0, 3], [-3, 3])  # center ~(0, 1.5, 0)
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    def test_rejects_mesh_with_distant_z_center(self):
+        """B_GEN_0 LOD copy at Z=13.5 rejected."""
+        good = _make_mesh_n(1000, (-3, 3), (0, 3), (-3, 3))
+        bad = _make_mesh_n(1000, (-3, 3), (0, 3), (10, 17))  # center Z=13.5
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_rejects_mesh_with_distant_negative_z(self):
+        """B_GEN_0 LOD copy at Z=-25.5 rejected."""
+        good = _make_mesh_n(1000, (-3, 3), (0, 3), (-3, 3))
+        bad = _make_mesh_n(1000, (-3, 3), (0, 3), (-28, -23))  # center Z=-25.5
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_rejects_mesh_with_distant_x_center(self):
+        """Mesh at X=15 rejected."""
+        good = _make_mesh_n(1000, (-3, 3), (0, 3), (-3, 3))
+        bad = _make_mesh_n(1000, (12, 18), (0, 3), (-3, 3))  # center X=15
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    # --- R2: Reject collision proxies (low verts, large volume) ---
+
+    def test_rejects_low_vert_large_volume(self):
+        """B_ALK_A collision proxy: 28 verts, volume 828."""
+        good = _make_mesh_n(6408, (-3, 3), (0, 3), (-3, 3))
+        # 8 verts in a big box — simulates collision proxy
+        bad = _make_mesh([-4.7, 4.7], [-7.4, 3.0], [-3, 10])
+        assert len(bad.vertices) < 50
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_keeps_small_low_vert_mesh(self):
+        """Tiny shadow plane (0.7x0.1x0.7) with few verts is kept."""
+        good = _make_mesh_n(1000, (-3, 3), (0, 3), (-3, 3))
+        small = _make_mesh([-0.35, 0.35], [0, 0.1], [-0.35, 0.35])
+        result = _filter_junk_meshes([good, small])
+        assert len(result) == 2
+
+    # --- R3: Reject oversized LOD hulls (dim > 7 + low verts) ---
+
+    def test_rejects_oversized_low_detail_mesh(self):
+        """B_TRU_A LOD hull: 188 verts at 8.2x6.3x5.8."""
+        good = _make_mesh_n(1000, (-0.7, 0.7), (-0.7, 0.7), (-1, 1))
+        bad = _make_mesh_n(188, (-4.1, 4.1), (-3.1, 3.2), (-2.9, 2.9))
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_keeps_large_mesh_with_many_verts(self):
+        """HAB_A at 6x3x12 with 5000+ verts is kept (legitimate 1x2 module)."""
+        big = _make_mesh_n(5000, (-3, 3), (0, 3), (-6, 6))  # 12 units Z
+        result = _filter_junk_meshes([big])
+        assert len(result) == 1
+
+    def test_keeps_moderately_large_detailed_mesh(self):
+        """Cockpit at 5.5x3.7x6.7 with 4486 verts — legitimate detail."""
+        m = _make_mesh_n(4486, (-2.7, 2.7), (-0.6, 3.1), (-0.2, 6.5))
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    # --- R4: Fallback — never return empty ---
+
+    def test_fallback_keeps_all_if_all_filtered(self):
+        """If every mesh would be rejected, keep them all."""
+        # All meshes have centers far from origin
+        m1 = _make_mesh([-3, 3], [0, 3], [20, 26])  # Z=23
+        m2 = _make_mesh([-3, 3], [0, 3], [-30, -24])  # Z=-27
+        result = _filter_junk_meshes([m1, m2])
+        assert len(result) == 2  # kept because fallback
+
+    def test_single_mesh_always_kept(self):
+        """Single mesh is never filtered even if it looks bad."""
+        m = _make_mesh([-3, 3], [0, 3], [20, 26])
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    # --- Combined: realistic B_GEN_0 scenario ---
+
+    def test_gen_0_realistic(self):
+        """B_GEN_0 with 6 meshes: keep main body + 2 shadow planes, reject 3 distant."""
+        main = _make_mesh_n(4486, (-3, 3), (0, 3.7), (-3, 3))       # center ~origin
+        lod1 = _make_mesh_n(4400, (-3, 3), (0, 3.8), (10, 17))      # center Z=13.5
+        lod2 = _make_mesh_n(4400, (-3, 3), (0, 3.7), (-28, -23))    # center Z=-25.5
+        lod3 = _make_mesh_n(4400, (-3, 3), (0, 3.7), (-15, -9))     # center Z=-12
+        shadow1 = _make_mesh([-0.35, 0.35], [0, 0.05], [-0.35, 0.35])
+        shadow2 = _make_mesh([-0.35, 0.35], [0, 0.05], [-0.35, 0.35])
+        result = _filter_junk_meshes([main, lod1, lod2, lod3, shadow1, shadow2])
+        assert len(result) == 3  # main + 2 shadows
