@@ -556,6 +556,38 @@ def _fit_meshes_to_cell(
     return fitted
 
 
+def _center_meshes(meshes: List[Mesh]) -> List[Mesh]:
+    """Center meshes at origin without any scaling.
+
+    Used in 3D mode where meshes render at their original game-unit size
+    and positions are raw game coordinates.
+    """
+    if not meshes:
+        return meshes
+    all_verts = [v for m in meshes for v in m.vertices]
+    if not all_verts:
+        return meshes
+
+    cx = (min(v[0] for v in all_verts) + max(v[0] for v in all_verts)) * 0.5
+    cy = (min(v[1] for v in all_verts) + max(v[1] for v in all_verts)) * 0.5
+    cz = (min(v[2] for v in all_verts) + max(v[2] for v in all_verts)) * 0.5
+
+    centered: List[Mesh] = []
+    for mesh in meshes:
+        verts = tuple(
+            (vx - cx, vy - cy, vz - cz) for vx, vy, vz in mesh.vertices
+        )
+        centered.append(
+            Mesh(
+                vertices=verts,
+                normals=mesh.normals,
+                uvs=mesh.uvs,
+                indices=mesh.indices,
+            )
+        )
+    return centered
+
+
 # ---------------------------------------------------------------------------
 # Main widget
 # ---------------------------------------------------------------------------
@@ -643,11 +675,8 @@ class Corvette3DView(QOpenGLWidget):
         """Set module data from PersistentPlayerBases 3D objects.
 
         Each dict must have: ObjectID (str), Position (list of 3 floats).
-        Optionally Up (list of 3 floats) and At (list of 3 floats).
-
-        Positions are raw game coordinates used directly — no grid
-        normalization.  Module meshes are already in game-unit scale.
-        A uniform viewport scale converts game-units to render-units.
+        Positions are raw game coordinates — no scaling applied.
+        Meshes are rendered at their original geometry scale.
         """
         self._is_3d_mode = True
         self._modules = []
@@ -663,50 +692,39 @@ class Corvette3DView(QOpenGLWidget):
             x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
             positions.append((x, y, z))
 
-            s = _3D_VIEWPORT_SCALE
-            rx, ry, rz = x * s, y * s, z * s
-
-            up_raw = obj.get("Up", [0.0, 1.0, 0.0])
-            at_raw = obj.get("At", [0.0, 0.0, 1.0])
-
             self._modules.append({
                 "Id": obj["ObjectID"],
                 "Index": {"X": 0, "Y": 0},
-                "_render_pos": (rx, ry, rz),
-                "_up": (float(up_raw[0]), float(up_raw[1]), float(up_raw[2])),
-                "_at": (float(at_raw[0]), float(at_raw[1]), float(at_raw[2])),
+                "_render_pos": (x, y, z),
                 "_layer": 0,
                 "_layer_row": 0,
                 "_3d_world_pos": (x, y, z),
             })
 
-        s = _3D_VIEWPORT_SCALE
         n = len(positions)
-        cx = sum(p[0] for p in positions) / n * s
-        cy = sum(p[1] for p in positions) / n * s
-        cz = sum(p[2] for p in positions) / n * s
+        cx = sum(p[0] for p in positions) / n
+        cy = sum(p[1] for p in positions) / n
+        cz = sum(p[2] for p in positions) / n
         self._cam_target = [cx, cy, cz]
 
         max_r = 0.0
         for p in positions:
-            dx = p[0] * s - cx
-            dy = p[1] * s - cy
-            dz = p[2] * s - cz
+            dx = p[0] - cx
+            dy = p[1] - cy
+            dz = p[2] - cz
             r = math.sqrt(dx * dx + dy * dy + dz * dz)
             if r > max_r:
                 max_r = r
-        self._cam_distance = max(8.0, min(60.0, max_r * 2.5 + 5.0))
+        self._cam_distance = max(8.0, min(200.0, max_r * 2.5 + 10.0))
 
         self.update()
 
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
-        footprint = _get_module_footprint(module_id)
         if self._is_3d_mode:
-            self._mesh_data[module_id] = _fit_meshes_to_cell(
-                meshes, footprint=footprint, cell_size=1.0,
-            )
+            self._mesh_data[module_id] = _center_meshes(meshes)
         else:
+            footprint = _get_module_footprint(module_id)
             self._mesh_data[module_id] = _fit_meshes_to_cell(
                 meshes, footprint=footprint,
             )
@@ -778,7 +796,7 @@ class Corvette3DView(QOpenGLWidget):
 
         # Build view-projection matrix
         aspect = w / h
-        proj = _mat4_perspective(45.0, aspect, 0.1, 100.0)
+        proj = _mat4_perspective(45.0, aspect, 0.1, 500.0)
 
         yaw_rad = math.radians(self._cam_yaw)
         pitch_rad = math.radians(self._cam_pitch)
@@ -831,9 +849,7 @@ class Corvette3DView(QOpenGLWidget):
             render_pos = slot.get("_render_pos")
             if render_pos is not None:
                 mx, my, mz = render_pos
-                up = slot.get("_up", (0, 1, 0))
-                at = slot.get("_at", (0, 0, 1))
-                model = _mat4_from_orientation(up, at, mx, my, mz)
+                model = _mat4_translate(mx, my, mz)
                 is_selected = self._selected == (slot_idx, 0, 0)
             else:
                 idx = slot.get("Index", {})
@@ -896,7 +912,7 @@ class Corvette3DView(QOpenGLWidget):
         if h <= 0:
             h = 1
         aspect = w / h
-        proj = _mat4_perspective(45.0, aspect, 0.1, 100.0)
+        proj = _mat4_perspective(45.0, aspect, 0.1, 500.0)
 
         yaw_rad = math.radians(self._cam_yaw)
         pitch_rad = math.radians(self._cam_pitch)
