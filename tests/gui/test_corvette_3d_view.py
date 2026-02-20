@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication
 
 from nmstoolkit.core.mesh_data import Mesh
 from nmstoolkit.gui.widgets.corvette_3d_view import (
+    _3D_VIEWPORT_SCALE,
     _CUBE_MESH,
     _MODULE_CATEGORIES,
     _MODULE_COLORS,
@@ -37,7 +38,12 @@ from nmstoolkit.gui.widgets.corvette_3d_view import (
     _normalize,
     _row_to_layer,
 )
-from nmstoolkit.gui.tabs.corvette_tab import CorvetteTab
+from nmstoolkit.gui.tabs.corvette_tab import (
+    CorvetteTab,
+    _extract_hull_modules_3d,
+    _find_corvette_base,
+    _is_hull_module,
+)
 
 _app = QApplication.instance() or QApplication([])
 
@@ -514,3 +520,353 @@ class TestLayerMapping:
         view.set_modules(inv)
         # layer_rows = ceil(16/3) = 6, camera target Z should be 6/2.0 = 3.0
         assert view._cam_target[2] == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# CORVETTE-3D-01: Hull filtering, base lookup, 3D positioning
+# ---------------------------------------------------------------------------
+
+
+class TestIsHullModule:
+    def test_cockpit_is_hull(self):
+        assert _is_hull_module("^B_COK_A") is True
+
+    def test_habitation_is_hull(self):
+        assert _is_hull_module("^B_HAB_C") is True
+
+    def test_access_module_is_hull(self):
+        assert _is_hull_module("^B_HAB1_A") is True
+
+    def test_wing_is_hull(self):
+        assert _is_hull_module("^B_WNG_A") is True
+
+    def test_structure_is_hull(self):
+        assert _is_hull_module("^B_STR_A_N") is True
+
+    def test_thruster_is_hull(self):
+        assert _is_hull_module("^B_TRU_A") is True
+
+    def test_turret_is_hull(self):
+        assert _is_hull_module("^B_TUR_C") is True
+
+    def test_generator_is_hull(self):
+        assert _is_hull_module("^B_GEN_0") is True
+
+    def test_landing_gear_is_hull(self):
+        assert _is_hull_module("^B_LND_A") is True
+
+    def test_shell_is_hull(self):
+        assert _is_hull_module("^B_SHL_A") is True
+
+    def test_airlock_is_hull(self):
+        assert _is_hull_module("^B_ALK_A") is True
+
+    def test_connector_is_hull(self):
+        assert _is_hull_module("^B_CON_4") is True
+
+    def test_decoration_is_hull(self):
+        assert _is_hull_module("^B_DECO_A") is True
+
+    def test_wall_is_not_hull(self):
+        assert _is_hull_module("^B_WALL_CARG0") is False
+
+    def test_stairs_not_hull(self):
+        assert _is_hull_module("^B_STAIRS0") is False
+
+    def test_door_not_hull(self):
+        assert _is_hull_module("^B_DOOR0") is False
+
+    def test_paragon_not_hull(self):
+        assert _is_hull_module("^U_PARAGON") is False
+
+    def test_billboard_not_hull(self):
+        assert _is_hull_module("BILLBOARD") is False
+
+    def test_empty_string(self):
+        assert _is_hull_module("") is False
+
+
+class TestFindCorvetteBase:
+    def test_finds_matching_base(self):
+        psd = {
+            "PersistentPlayerBases": [
+                {"BaseType": {"PersistentBaseTypes": "HomePlanetBase"}, "UserData": 0},
+                {"BaseType": {"PersistentBaseTypes": "PlayerShipBase"}, "UserData": 3},
+                {"BaseType": {"PersistentBaseTypes": "PlayerShipBase"}, "UserData": 7},
+            ]
+        }
+        base = _find_corvette_base(psd, 7)
+        assert base is not None
+        assert base["UserData"] == 7
+
+    def test_returns_none_when_no_match(self):
+        psd = {"PersistentPlayerBases": [
+            {"BaseType": {"PersistentBaseTypes": "HomePlanetBase"}, "UserData": 0},
+        ]}
+        assert _find_corvette_base(psd, 5) is None
+
+    def test_returns_none_when_no_bases(self):
+        assert _find_corvette_base({}, 0) is None
+
+    def test_returns_none_when_base_type_not_dict(self):
+        psd = {"PersistentPlayerBases": [{"BaseType": "broken", "UserData": 0}]}
+        assert _find_corvette_base(psd, 0) is None
+
+    def test_skips_non_ship_bases(self):
+        psd = {"PersistentPlayerBases": [
+            {"BaseType": {"PersistentBaseTypes": "HomePlanetBase"}, "UserData": 3},
+            {"BaseType": {"PersistentBaseTypes": "PlayerShipBase"}, "UserData": 3},
+        ]}
+        base = _find_corvette_base(psd, 3)
+        assert base["BaseType"]["PersistentBaseTypes"] == "PlayerShipBase"
+
+
+class TestExtractHullModules3d:
+    def test_filters_hull_only(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_WALL_CARG0", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_WNG_A", "Position": [3.0, 4.5, -6.0]},
+            {"ObjectID": "^U_PARAGON", "Position": [0.0, 0.0, 0.0]},
+            {"ObjectID": "BILLBOARD", "Position": [0.0, 3.0, 0.0]},
+        ]}
+        result = _extract_hull_modules_3d(base)
+        ids = [m["ObjectID"] for m in result]
+        assert "^B_COK_A" in ids
+        assert "^B_WNG_A" in ids
+        assert "^B_WALL_CARG0" not in ids
+        assert "^U_PARAGON" not in ids
+        assert "BILLBOARD" not in ids
+        assert len(result) == 2
+
+    def test_preserves_position(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ]}
+        result = _extract_hull_modules_3d(base)
+        assert result[0]["Position"] == [0.0, 3.0, -3.0]
+
+    def test_provides_default_up_at(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ]}
+        result = _extract_hull_modules_3d(base)
+        assert result[0]["Up"] == [0.0, 1.0, 0.0]
+        assert result[0]["At"] == [0.0, 0.0, 1.0]
+
+    def test_preserves_custom_orientation(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_DECO_A", "Position": [0.0, 6.0, 18.0],
+             "Up": [0.0, 1.0, 0.0], "At": [-1.0, 0.0, 0.0]},
+        ]}
+        result = _extract_hull_modules_3d(base)
+        assert result[0]["At"] == [-1.0, 0.0, 0.0]
+
+    def test_skips_objects_without_position(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_COK_A"},
+        ]}
+        assert _extract_hull_modules_3d(base) == []
+
+    def test_empty_objects(self):
+        assert _extract_hull_modules_3d({"Objects": []}) == []
+        assert _extract_hull_modules_3d({}) == []
+
+    def test_duplicate_module_ids_preserved(self):
+        base = {"Objects": [
+            {"ObjectID": "^B_HAB1_A", "Position": [6.0, 3.0, -12.0]},
+            {"ObjectID": "^B_HAB1_A", "Position": [-6.0, 3.0, -12.0]},
+        ]}
+        result = _extract_hull_modules_3d(base)
+        assert len(result) == 2
+        assert result[0]["Position"] != result[1]["Position"]
+
+
+class TestSetModules3d:
+    def _make_view(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        return Corvette3DView()
+
+    def test_sets_3d_mode_flag(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        assert view._is_3d_mode is True
+
+    def test_set_modules_clears_3d_mode(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        view.set_modules({"Width": 10, "Height": 16, "Slots": []})
+        assert view._is_3d_mode is False
+
+    def test_render_pos_normalized_by_grid_step(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [12.0, 6.0, -6.0]},
+        ])
+        rp = view._modules[0]["_render_pos"]
+        # Uniform scale: all axes × (1/6)
+        assert rp == pytest.approx((2.0, 1.0, -1.0))
+
+    def test_camera_centers_on_centroid(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 0.0, 0.0]},
+            {"ObjectID": "^B_WNG_A", "Position": [6.0, 0.0, 0.0]},
+        ])
+        # Centroid raw = (3.0, 0.0, 0.0), uniform scale ×(1/6) = (0.5, 0.0, 0.0)
+        assert view._cam_target[0] == pytest.approx(0.5)
+        assert view._cam_target[1] == pytest.approx(0.0)
+        assert view._cam_target[2] == pytest.approx(0.0)
+
+    def test_module_retains_item_id(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        assert view._modules[0]["Id"] == "^B_COK_A"
+
+    def test_empty_modules_list(self):
+        view = self._make_view()
+        view.set_modules_3d([])
+        assert view._modules == []
+        assert view._is_3d_mode is True
+
+    def test_multiple_modules_count(self):
+        view = self._make_view()
+        modules = [
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_HAB_A", "Position": [0.0, 3.0, -9.0]},
+            {"ObjectID": "^B_TRU_A", "Position": [6.0, 4.5, -15.0]},
+        ]
+        view.set_modules_3d(modules)
+        assert len(view._modules) == 3
+
+    def test_3d_world_pos_stored(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        assert view._modules[0]["_3d_world_pos"] == pytest.approx((0.0, 3.0, -3.0))
+
+
+# ---------------------------------------------------------------------------
+# CORVETTE-3D-02: Physical mesh scaling in 3D mode
+# ---------------------------------------------------------------------------
+
+
+class TestViewportScaleConstant:
+    """_3D_VIEWPORT_SCALE is a module-level constant equal to 1/6."""
+
+    def test_value(self):
+        assert _3D_VIEWPORT_SCALE == pytest.approx(1.0 / 6.0)
+
+    def test_is_float(self):
+        assert isinstance(_3D_VIEWPORT_SCALE, float)
+
+
+class TestMeshDataScaling3d:
+    """In 3D mode, set_mesh_data scales meshes by viewport scale instead of
+    fitting them to grid cells."""
+
+    def _make_view(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        return Corvette3DView()
+
+    def _make_mesh(self, extent_x: float, extent_y: float, extent_z: float) -> Mesh:
+        """Create a mesh with known bounding box from origin."""
+        return Mesh(
+            vertices=(
+                (0.0, 0.0, 0.0),
+                (extent_x, 0.0, 0.0),
+                (extent_x, extent_y, extent_z),
+                (0.0, extent_y, extent_z),
+            ),
+            normals=((0, 0, 1),) * 4,
+            uvs=((0, 0), (1, 0), (1, 1), (0, 1)),
+            indices=(0, 1, 2, 0, 2, 3),
+        )
+
+    def test_3d_mode_scales_by_viewport_scale(self):
+        """In 3D mode, a 6.0-unit mesh should become 1.0 render-unit."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        mesh = self._make_mesh(6.0, 3.0, 12.0)
+        view.set_mesh_data("B_COK_A", [mesh])
+        stored = view._mesh_data["B_COK_A"]
+        all_verts = [v for m in stored for v in m.vertices]
+        xs = [v[0] for v in all_verts]
+        ys = [v[1] for v in all_verts]
+        zs = [v[2] for v in all_verts]
+        x_span = max(xs) - min(xs)
+        y_span = max(ys) - min(ys)
+        z_span = max(zs) - min(zs)
+        # 6.0 * (1/6) = 1.0, 3.0 * (1/6) = 0.5, 12.0 * (1/6) = 2.0
+        assert x_span == pytest.approx(1.0, abs=0.01)
+        assert y_span == pytest.approx(0.5, abs=0.01)
+        assert z_span == pytest.approx(2.0, abs=0.01)
+
+    def test_3d_mode_preserves_aspect_ratio(self):
+        """Physical aspect ratio must be preserved — no axis-dependent squashing."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_WNG_A", "Position": [0.0, 3.0, -3.0]},
+        ])
+        mesh = self._make_mesh(6.0, 7.0, 20.0)
+        view.set_mesh_data("B_WNG_A", [mesh])
+        stored = view._mesh_data["B_WNG_A"]
+        all_verts = [v for m in stored for v in m.vertices]
+        xs = [v[0] for v in all_verts]
+        ys = [v[1] for v in all_verts]
+        zs = [v[2] for v in all_verts]
+        x_span = max(xs) - min(xs)
+        y_span = max(ys) - min(ys)
+        z_span = max(zs) - min(zs)
+        # Original ratio: 6:7:20 should be preserved after uniform scaling
+        assert z_span / x_span == pytest.approx(20.0 / 6.0, abs=0.1)
+        assert y_span / x_span == pytest.approx(7.0 / 6.0, abs=0.1)
+
+    def test_3d_mode_centers_mesh_at_origin(self):
+        """Scaled mesh should be centered at origin for correct anchor positioning."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_HAB_C", "Position": [0.0, 3.0, -3.0]},
+        ])
+        mesh = self._make_mesh(6.0, 3.0, 12.0)
+        view.set_mesh_data("B_HAB_C", [mesh])
+        stored = view._mesh_data["B_HAB_C"]
+        all_verts = [v for m in stored for v in m.vertices]
+        cx = (max(v[0] for v in all_verts) + min(v[0] for v in all_verts)) / 2
+        cy = (max(v[1] for v in all_verts) + min(v[1] for v in all_verts)) / 2
+        cz = (max(v[2] for v in all_verts) + min(v[2] for v in all_verts)) / 2
+        assert cx == pytest.approx(0.0, abs=0.01)
+        assert cy == pytest.approx(0.0, abs=0.01)
+        assert cz == pytest.approx(0.0, abs=0.01)
+
+    def test_2d_mode_still_uses_fit_to_cell(self):
+        """In 2D mode (draft), set_mesh_data behavior unchanged."""
+        view = self._make_view()
+        # Default mode is 2D (no set_modules_3d called)
+        mesh = self._make_mesh(6.0, 3.0, 12.0)
+        view.set_mesh_data("B_COK_A", [mesh])
+        stored = view._mesh_data["B_COK_A"]
+        all_verts = [v for m in stored for v in m.vertices]
+        max_dim = max(
+            max(v[i] for v in all_verts) - min(v[i] for v in all_verts)
+            for i in range(3)
+        )
+        # _fit_meshes_to_cell caps at 0.9 * footprint — B_COK is 1×2 → max 1.8
+        assert max_dim <= 1.81
+
+    def test_invalidates_gpu_cache(self):
+        """set_mesh_data clears GPU cache for the module."""
+        view = self._make_view()
+        view._mesh_cache["B_COK_A"] = "dummy_gpu"
+        mesh = self._make_mesh(6.0, 3.0, 12.0)
+        view.set_mesh_data("B_COK_A", [mesh])
+        assert "B_COK_A" not in view._mesh_cache

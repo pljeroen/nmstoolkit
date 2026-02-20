@@ -76,6 +76,57 @@ def _get_module_category(item_id: str) -> str:
 _CORVETTE_MODULE_PREFIXES = ("B_COK", "B_HAB", "B_WNG", "B_STR", "B_TRU", "B_TUR", "B_LND", "B_SHL", "B_ALK", "B_GEN", "B_CON", "B_DECO")
 
 
+def _is_hull_module(object_id: str) -> bool:
+    """Return True if object_id is an exterior corvette hull module.
+
+    Uses _CORVETTE_MODULE_PREFIXES to include only structural hull parts.
+    Excludes interior items (B_WALL_*, B_STAIRS*, B_DOOR*), anchors (U_PARAGON),
+    and any other non-hull objects found in PersistentPlayerBases.
+    """
+    uid = object_id.lstrip("^").upper()
+    return any(uid.startswith(prefix) for prefix in _CORVETTE_MODULE_PREFIXES)
+
+
+def _find_corvette_base(psd: dict, ship_ownership_index: int) -> Optional[dict]:
+    """Find the PersistentPlayerBases entry for a completed corvette.
+
+    Corvette bases have BaseType.PersistentBaseTypes == "PlayerShipBase"
+    and UserData matching the ship's index in ShipOwnership.
+    """
+    for base in psd.get("PersistentPlayerBases", []):
+        base_type = base.get("BaseType", {})
+        if not isinstance(base_type, dict):
+            continue
+        if base_type.get("PersistentBaseTypes") != "PlayerShipBase":
+            continue
+        if base.get("UserData") == ship_ownership_index:
+            return base
+    return None
+
+
+def _extract_hull_modules_3d(base: dict) -> List[dict]:
+    """Extract hull module objects with 3D positions from a corvette base.
+
+    Returns a list of dicts with keys: ObjectID, Position, Up, At.
+    Only includes exterior hull modules (filtered by _is_hull_module).
+    """
+    result: List[dict] = []
+    for obj in base.get("Objects", []):
+        object_id = obj.get("ObjectID", "")
+        if not _is_hull_module(object_id):
+            continue
+        pos = obj.get("Position")
+        if not isinstance(pos, list) or len(pos) < 3:
+            continue
+        result.append({
+            "ObjectID": object_id,
+            "Position": pos,
+            "Up": obj.get("Up", [0.0, 1.0, 0.0]),
+            "At": obj.get("At", [0.0, 0.0, 1.0]),
+        })
+    return result
+
+
 def _inventory_has_data(inv: dict) -> bool:
     if not isinstance(inv, dict):
         return False
@@ -552,12 +603,7 @@ class CorvetteTab(QWidget):
                         )
                     return
             # Feed currently selected data to 3D view.
-            selected_inv = self._selected_inventory_for_3d()
-            if selected_inv is not None:
-                self._3d_view.set_modules(selected_inv)
-                # Force refresh once when entering 3D so stale cached proxy meshes
-                # don't hide improved gamefile/parts-derived geometry.
-                self._load_missing_meshes_from_gamefiles(selected_inv, force=True)
+            self._feed_3d_view(force_reload=True)
             self._draft_stack.setCurrentIndex(1)
             self._view_toggle_btn.setText("Switch to 2D Grid")
         else:
@@ -764,10 +810,7 @@ class CorvetteTab(QWidget):
                     path.unlink()
         except Exception:
             pass
-        draft_inv = self._data.get("CorvetteStorageInventory", {})
-        self._3d_view.set_modules(draft_inv)
-        self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
-        self._3d_view.update()
+        self._feed_3d_view(force_reload=True)
 
     @staticmethod
     def _mesh_cache_dir() -> Path:
@@ -841,9 +884,7 @@ class CorvetteTab(QWidget):
 
         # Keep 3D view in sync with current selection if it is active.
         if self._3d_view is not None and self._draft_stack.currentIndex() == 1:
-            self._3d_view.set_modules(inv)
-            self._load_missing_meshes_from_gamefiles(inv, force=True)
-            self._3d_view.update()
+            self._feed_3d_view(force_reload=True)
 
     def _show_draft(self):
         """Show the active corvette draft."""
@@ -877,12 +918,11 @@ class CorvetteTab(QWidget):
 
         self._inv_draft.set_inventory(draft_inv)
 
-        # Update 3D view if it exists
+        # Update 3D view if it exists (draft mode → always uses grid)
         if self._3d_view is not None:
             self._3d_view.set_modules(draft_inv)
             if self._draft_stack.currentIndex() == 1:
-                self._load_missing_meshes_from_gamefiles(draft_inv, force=True)
-                self._3d_view.update()
+                self._feed_3d_view(force_reload=True)
 
         # Module summary from draft
         slots = draft_inv.get("Slots", [])
@@ -901,7 +941,7 @@ class CorvetteTab(QWidget):
         self._summary_label.setText("\n".join(summary_lines))
 
     def _selected_inventory_for_3d(self) -> Optional[dict]:
-        """Return currently selected inventory payload for 3D rendering."""
+        """Return currently selected inventory payload for mesh loading."""
         if self._data is None:
             return None
         if self._current_index < 0:
@@ -910,6 +950,37 @@ class CorvetteTab(QWidget):
         if ship is None:
             return None
         return ship.get("Inventory", {})
+
+    def _feed_3d_view(self, force_reload: bool = True) -> None:
+        """Send the appropriate data to the 3D view widget.
+
+        For completed corvettes: extracts hull modules from PersistentPlayerBases
+        and uses set_modules_3d() for real 3D positions.
+        For draft: uses set_modules() with CorvetteStorageInventory (2D grid).
+        Falls back to 2D grid if no ship base found.
+        """
+        if self._3d_view is None or self._data is None:
+            return
+        if self._current_index >= 0:
+            ship_idx = self._corvettes[self._current_index][0]
+            base = _find_corvette_base(self._data, ship_idx)
+            if base is not None:
+                hull_modules = _extract_hull_modules_3d(base)
+                if hull_modules:
+                    self._3d_view.set_modules_3d(hull_modules)
+                    # Build pseudo-inventory for mesh loading
+                    mesh_inv = {
+                        "Slots": [{"Id": m["ObjectID"]} for m in hull_modules],
+                    }
+                    self._load_missing_meshes_from_gamefiles(mesh_inv, force=force_reload)
+                    self._3d_view.update()
+                    return
+        # Draft or fallback: use inventory grid
+        selected_inv = self._selected_inventory_for_3d()
+        if selected_inv is not None:
+            self._3d_view.set_modules(selected_inv)
+            self._load_missing_meshes_from_gamefiles(selected_inv, force=force_reload)
+            self._3d_view.update()
 
     def _current_ship(self) -> Optional[dict]:
         """Get the currently selected ship dict, or None for draft."""

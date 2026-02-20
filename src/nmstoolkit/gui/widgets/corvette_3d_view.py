@@ -62,6 +62,10 @@ _LAYER_COUNT = 3
 _LAYER_HEIGHT = 0.9
 _INVERT_LAYER_ORDER = True
 
+# Viewport scale for 3D mode: game-units → render-units.
+# 6 game-units = 1 render-unit.
+_3D_VIEWPORT_SCALE: float = 1.0 / 6.0
+
 
 def _get_module_category(item_id: str) -> str:
     """Get category name for a module ID."""
@@ -508,6 +512,53 @@ def _fit_meshes_to_cell(meshes: List[Mesh], footprint: Tuple[int, int] = (1, 1))
     return fitted
 
 
+def _scale_meshes_3d(meshes: List[Mesh]) -> List[Mesh]:
+    """Scale and center meshes for 3D mode using uniform viewport scale.
+
+    Unlike _fit_meshes_to_cell (which squashes to a grid cell), this
+    applies _3D_VIEWPORT_SCALE uniformly to preserve physical proportions.
+    Meshes are centered at the origin so they render correctly at their
+    anchor position.
+    """
+    if not meshes:
+        return meshes
+    all_verts = [v for m in meshes for v in m.vertices]
+    if not all_verts:
+        return meshes
+
+    min_x = min(v[0] for v in all_verts)
+    min_y = min(v[1] for v in all_verts)
+    min_z = min(v[2] for v in all_verts)
+    max_x = max(v[0] for v in all_verts)
+    max_y = max(v[1] for v in all_verts)
+    max_z = max(v[2] for v in all_verts)
+
+    cx = (min_x + max_x) * 0.5
+    cy = (min_y + max_y) * 0.5
+    cz = (min_z + max_z) * 0.5
+
+    s = _3D_VIEWPORT_SCALE
+    scaled: List[Mesh] = []
+    for mesh in meshes:
+        verts = tuple(
+            (
+                (vx - cx) * s,
+                (vy - cy) * s,
+                (vz - cz) * s,
+            )
+            for vx, vy, vz in mesh.vertices
+        )
+        scaled.append(
+            Mesh(
+                vertices=verts,
+                normals=mesh.normals,
+                uvs=mesh.uvs,
+                indices=mesh.indices,
+            )
+        )
+    return scaled
+
+
 # ---------------------------------------------------------------------------
 # Main widget
 # ---------------------------------------------------------------------------
@@ -527,6 +578,7 @@ class Corvette3DView(QOpenGLWidget):
         self._grid_width = 10
         self._grid_height = 16
         self._layer_rows = 6
+        self._is_3d_mode = False
         self._selected: Optional[Tuple[int, int, int]] = None
 
         # Camera
@@ -557,7 +609,8 @@ class Corvette3DView(QOpenGLWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
     def set_modules(self, inventory: dict):
-        """Set module data from a CorvetteStorageInventory dict."""
+        """Set module data from a CorvetteStorageInventory dict (2D grid mode)."""
+        self._is_3d_mode = False
         self._grid_width = inventory.get("Width", 10)
         self._grid_height = inventory.get("Height", 16)
         slots = [s for s in inventory.get("Slots", []) if s.get("Id", "")]
@@ -589,10 +642,68 @@ class Corvette3DView(QOpenGLWidget):
             self._grid_gpu = self._rebuild_grid_vao(self._grid_width, self._layer_rows)
         self.update()
 
+    def set_modules_3d(self, modules: List[dict]) -> None:
+        """Set module data from PersistentPlayerBases 3D objects.
+
+        Each dict must have: ObjectID (str), Position (list of 3 floats).
+        Optionally Up (list of 3 floats) and At (list of 3 floats).
+
+        Positions are raw game coordinates used directly — no grid
+        normalization.  Module meshes are already in game-unit scale.
+        A uniform viewport scale converts game-units to render-units.
+        """
+        self._is_3d_mode = True
+        self._modules = []
+
+        if not modules:
+            self._cam_target = [0.0, 0.0, 0.0]
+            self.update()
+            return
+
+        positions = []
+        for obj in modules:
+            pos = obj["Position"]
+            x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+            positions.append((x, y, z))
+
+            s = _3D_VIEWPORT_SCALE
+            rx, ry, rz = x * s, y * s, z * s
+
+            self._modules.append({
+                "Id": obj["ObjectID"],
+                "Index": {"X": 0, "Y": 0},
+                "_render_pos": (rx, ry, rz),
+                "_layer": 0,
+                "_layer_row": 0,
+                "_3d_world_pos": (x, y, z),
+            })
+
+        s = _3D_VIEWPORT_SCALE
+        n = len(positions)
+        cx = sum(p[0] for p in positions) / n * s
+        cy = sum(p[1] for p in positions) / n * s
+        cz = sum(p[2] for p in positions) / n * s
+        self._cam_target = [cx, cy, cz]
+
+        max_r = 0.0
+        for p in positions:
+            dx = p[0] * s - cx
+            dy = p[1] * s - cy
+            dz = p[2] * s - cz
+            r = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if r > max_r:
+                max_r = r
+        self._cam_distance = max(8.0, min(60.0, max_r * 2.5 + 5.0))
+
+        self.update()
+
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
-        footprint = _get_module_footprint(module_id)
-        self._mesh_data[module_id] = _fit_meshes_to_cell(meshes, footprint=footprint)
+        if self._is_3d_mode:
+            self._mesh_data[module_id] = _scale_meshes_3d(meshes)
+        else:
+            footprint = _get_module_footprint(module_id)
+            self._mesh_data[module_id] = _fit_meshes_to_cell(meshes, footprint=footprint)
         # Invalidate cached GPU mesh so it gets re-uploaded
         self._mesh_cache.pop(module_id, None)
 
@@ -707,26 +818,32 @@ class Corvette3DView(QOpenGLWidget):
         GL.glUniform1f(loc_ambient, 0.25)
 
         for slot_idx, slot in enumerate(self._modules):
-            idx = slot.get("Index", {})
-            x = idx.get("X", 0)
-            z = int(slot.get("_layer_row", idx.get("Y", 0)))
-            layer = int(slot.get("_layer", 0))
             item_id = slot.get("Id", "")
             _module_variation_phase(frame_seed, slot_idx)  # procedural offset
             r, g, b = _get_module_color(item_id)
 
-            is_selected = self._selected == (x, z, layer)
+            render_pos = slot.get("_render_pos")
+            if render_pos is not None:
+                mx, my, mz = render_pos
+                model = _mat4_translate(mx, my, mz)
+                is_selected = self._selected == (slot_idx, 0, 0)
+            else:
+                idx = slot.get("Index", {})
+                x = idx.get("X", 0)
+                z = int(slot.get("_layer_row", idx.get("Y", 0)))
+                layer = int(slot.get("_layer", 0))
+                footprint = _get_module_footprint(item_id)
+                offset_x = (footprint[0] - 1) / 2.0
+                offset_z = (footprint[1] - 1) / 2.0
+                model = _mat4_translate(
+                    float(x) + offset_x,
+                    float(layer) * _LAYER_HEIGHT,
+                    float(z) + offset_z,
+                )
+                is_selected = self._selected == (x, z, layer)
+
             if is_selected:
                 r, g, b = min(1.0, r + 0.3), min(1.0, g + 0.3), min(1.0, b + 0.3)
-
-            footprint = _get_module_footprint(item_id)
-            offset_x = (footprint[0] - 1) / 2.0
-            offset_z = (footprint[1] - 1) / 2.0
-            model = _mat4_translate(
-                float(x) + offset_x,
-                float(layer) * _LAYER_HEIGHT,
-                float(z) + offset_z,
-            )
             mvp = _mat4_multiply(vp, model)
 
             # Normal matrix = transpose of inverse of upper-left 3x3 of model
@@ -808,14 +925,19 @@ class Corvette3DView(QOpenGLWidget):
         best = None
         best_d2 = radius_px * radius_px
         for slot in self._modules:
-            idx = slot.get("Index", {})
-            x = idx.get("X", 0)
-            z = int(slot.get("_layer_row", idx.get("Y", 0)))
-            layer = int(slot.get("_layer", 0))
-            footprint = _get_module_footprint(str(slot.get("Id", "")))
-            wx = float(x) + (footprint[0] - 1) / 2.0
-            wz = float(z) + (footprint[1] - 1) / 2.0
-            p = self._project_world_to_screen(vp, (wx, float(layer) * _LAYER_HEIGHT, wz))
+            render_pos = slot.get("_render_pos")
+            if render_pos is not None:
+                wx, wy, wz = render_pos
+            else:
+                idx = slot.get("Index", {})
+                x = idx.get("X", 0)
+                z = int(slot.get("_layer_row", idx.get("Y", 0)))
+                layer = int(slot.get("_layer", 0))
+                footprint = _get_module_footprint(str(slot.get("Id", "")))
+                wx = float(x) + (footprint[0] - 1) / 2.0
+                wz = float(z) + (footprint[1] - 1) / 2.0
+                wy = float(layer) * _LAYER_HEIGHT
+            p = self._project_world_to_screen(vp, (wx, wy, wz))
             if p is None:
                 continue
             dx = p[0] - px
@@ -828,13 +950,19 @@ class Corvette3DView(QOpenGLWidget):
 
     @staticmethod
     def _slot_tooltip(slot: dict) -> str:
+        item_id = str(slot.get("Id", "")).lstrip("^")
+        category = _get_module_category(item_id)
+        name = _get_module_display_name(item_id)
+        world_pos = slot.get("_3d_world_pos")
+        if world_pos is not None:
+            return (
+                f"{name}\nCategory: {category}\n"
+                f"Position: ({world_pos[0]:.1f}, {world_pos[1]:.1f}, {world_pos[2]:.1f})"
+            )
         idx = slot.get("Index", {})
         x, y = idx.get("X", 0), idx.get("Y", 0)
         layer = int(slot.get("_layer", 0))
         layer_row = int(slot.get("_layer_row", y))
-        item_id = str(slot.get("Id", "")).lstrip("^")
-        category = _get_module_category(item_id)
-        name = _get_module_display_name(item_id)
         if slot.get("_no_layer_tooltip"):
             return f"{name}\nCategory: {category}\nGrid: ({x}, {y})"
         return (
@@ -981,6 +1109,8 @@ class Corvette3DView(QOpenGLWidget):
         return _GpuMesh(vao, vbo, 0, num_verts)
 
     def _draw_grid(self, vp: List[float]) -> None:
+        if self._is_3d_mode:
+            return
         GL = self._GL
         GL.glUseProgram(self._grid_shader_program)
 
