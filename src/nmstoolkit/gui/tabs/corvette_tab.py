@@ -180,19 +180,27 @@ def _scene_candidates_for_module(module_id: str) -> list[str]:
         ]
 
     if parts[1] == "WNG" and len(parts) >= 3:
-        if parts[2] == "O" and len(parts) >= 4:
-            n = parts[3].lower()
+        is_right = parts[-1] == "R" and len(parts) >= 4
+        if parts[2] == "O":
+            # Outer wings: B_WNG_O_1, B_WNG_O_1_R
+            n_idx = 3 if len(parts) > 3 else 2
+            n = parts[n_idx].lower() if n_idx < len(parts) and parts[n_idx] != "R" else "0"
+            first = "r" if is_right else "l"
+            second = "l" if is_right else "r"
             return [
-                f"{parts_base}wing_{n}_l.scene.mbin",
-                f"{parts_base}wing_{n}_r.scene.mbin",
-                f"{parts_base}wing_{n}.scene.mbin",
+                f"{parts_base}wing_o_{n}_{first}.scene.mbin",
+                f"{parts_base}wing_o_{n}_{second}.scene.mbin",
+                f"{parts_base}wing_{n}_{first}.scene.mbin",
+                f"{parts_base}wing_{n}_{second}.scene.mbin",
                 f"{base}ext_wing_o_{n}_1x2_placement.scene.mbin",
                 f"{base}ext_wing_o_{n}_1x2_r_placement.scene.mbin",
             ]
         v = parts[2].lower()
+        first = "r" if is_right else "l"
+        second = "l" if is_right else "r"
         return [
-            f"{parts_base}wing_{v}_l.scene.mbin",
-            f"{parts_base}wing_{v}_r.scene.mbin",
+            f"{parts_base}wing_{v}_{first}.scene.mbin",
+            f"{parts_base}wing_{v}_{second}.scene.mbin",
             f"{parts_base}wing_{v}.scene.mbin",
             f"{base}ext_wing_{v}_1x2_placement.scene.mbin",
             f"{base}ext_wing_{v}_1x2_r_placement.scene.mbin",
@@ -204,6 +212,13 @@ def _scene_candidates_for_module(module_id: str) -> list[str]:
         return [
             f"{parts_base}connectors/connector_1x1_l_{n}.scene.mbin",
             f"{base}ext_connector_1x1_l_{n}_placement.scene.mbin",
+        ]
+
+    if parts[1] == "CON" and len(parts) >= 4 and parts[2] == "R":
+        n = parts[3].lower()
+        return [
+            f"{parts_base}connectors/connector_1x1_r_{n}.scene.mbin",
+            f"{base}ext_connector_1x1_r_{n}_placement.scene.mbin",
         ]
 
     if parts[1] == "CON2" and len(parts) >= 3:
@@ -234,7 +249,11 @@ def _scene_candidates_for_module(module_id: str) -> list[str]:
         ]
 
     if parts[1] == "TUR":
-        return [f"{base}ext_turret_1x1_placement.scene.mbin"]
+        v = parts[2].lower() if len(parts) >= 3 else "a"
+        return [
+            f"{parts_base}gun_{v}.scene.mbin",
+            f"{base}ext_turret_1x1_placement.scene.mbin",
+        ]
 
     if parts[1] == "LND":
         v = parts[2].lower() if len(parts) >= 3 else "a"
@@ -263,24 +282,39 @@ def _scene_candidates_for_module(module_id: str) -> list[str]:
     if parts[1] == "GEN" and len(parts) >= 3:
         n = parts[2].lower()
         return [
+            f"{parts_base}generators/generator_1x1_{n}.scene.mbin",
             f"{parts_base}generator_{n}.scene.mbin",
             f"{base}ext_gen_1x1_{n}_placement.scene.mbin",
         ]
 
     if parts[1] == "STR":
+        # B_STR_{letter}_{direction} or B_STR_{letter}_Y_{direction}{suffix}
+        # Y is a modifier (elevation), not a compass direction.
         candidates = []
         if len(parts) >= 4:
-            direction = parts[3].lower()
-            v = parts[2].lower() if len(parts) >= 3 else "a"
+            if parts[3] == "Y" and len(parts) >= 5:
+                # B_STR_B_Y_NE2 → direction=ne, strip trailing digits
+                raw_dir = parts[4].lower()
+                direction = raw_dir.rstrip("0123456789")
+                if not direction:
+                    direction = raw_dir
+            else:
+                # B_STR_C_NE → direction=ne
+                raw_dir = parts[3].lower()
+                direction = raw_dir.rstrip("0123456789")
+                if not direction:
+                    direction = raw_dir
             candidates.append(f"{parts_base}structural/structural_1x1_{direction}_0.scene.mbin")
-            candidates.append(f"{parts_base}structural/structural_1x1_{direction}_{v}.scene.mbin")
             candidates.append(f"{base}ext_structural_1x1_{direction}_placement.scene.mbin")
             candidates.append(f"{base}ext_structural_1x1_y_{direction}_placement.scene.mbin")
         candidates.append(f"{base}ext_structural_1x1_placement.scene.mbin")
         return candidates
 
     if parts[1] == "DECO":
+        # B_DECO_A=0, B_DECO_B=1, ... B_DECO_P=15 etc.
+        n = ord(parts[2]) - ord("A") if len(parts) >= 3 and parts[2].isalpha() else 0
         return [
+            f"{parts_base}decoration/decoration_{n}.scene.mbin",
             f"{parts_base}bay_a.scene.mbin",
             f"{base}bay_a_1x1_placement.scene.mbin",
         ]

@@ -393,3 +393,108 @@ class TestCorvetteGamefileHelpers:
         assert candidates
         assert candidates[0] == "models/common/spacecraft/biggs/modules/parts/wing_a_l.scene.mbin"
         assert "models/common/spacecraft/biggs/modules/ext_wing_a_1x2_placement.scene.mbin" in candidates
+
+    def test_scene_candidates_hab_returns_core(self):
+        candidates = _scene_candidates_for_module("B_HAB_A")
+        assert candidates
+        assert candidates[0] == "models/common/spacecraft/biggs/modules/parts/hab_a_1x2_core.scene.mbin"
+
+    def test_scene_candidates_hab1_returns_core(self):
+        candidates = _scene_candidates_for_module("B_HAB1_A")
+        assert candidates
+        assert candidates[0] == "models/common/spacecraft/biggs/modules/parts/hab_a_1x1_core.scene.mbin"
+
+    # --- BUG_1: B_STR with _Y_ modifier ---
+
+    def test_scene_candidates_str_y_modifier_extracts_direction(self):
+        """B_STR_B_Y_NE2 — Y is modifier, NE is direction, 2 is suffix."""
+        candidates = _scene_candidates_for_module("B_STR_B_Y_NE2")
+        parts_base = "models/common/spacecraft/biggs/modules/parts/"
+        assert any("structural_1x1_ne" in c for c in candidates), (
+            f"Expected 'ne' direction in candidates, got: {candidates}"
+        )
+
+    def test_scene_candidates_str_y_multiple_variants(self):
+        """B_STR_D_Y_N — single-letter direction after Y."""
+        candidates = _scene_candidates_for_module("B_STR_D_Y_N")
+        assert any("structural_1x1_n_" in c for c in candidates)
+
+    def test_scene_candidates_str_y_ne_without_suffix(self):
+        """B_STR_K_Y_NE — NE direction, no numeric suffix."""
+        candidates = _scene_candidates_for_module("B_STR_K_Y_NE")
+        assert any("structural_1x1_ne" in c for c in candidates)
+
+    def test_scene_candidates_str_no_y_still_works(self):
+        """B_STR_C_NE — no Y modifier, must still work."""
+        candidates = _scene_candidates_for_module("B_STR_C_NE")
+        assert any("structural_1x1_ne" in c for c in candidates)
+
+    # --- BUG_2: B_WNG with _R suffix ---
+
+    def test_scene_candidates_wing_r_prefers_right(self):
+        """B_WNG_A_R must prefer wing_a_r over wing_a_l."""
+        candidates = _scene_candidates_for_module("B_WNG_A_R")
+        parts_base = "models/common/spacecraft/biggs/modules/parts/"
+        assert candidates[0] == f"{parts_base}wing_a_r.scene.mbin"
+
+    def test_scene_candidates_wing_left_still_prefers_left(self):
+        """B_WNG_A (no _R) must still prefer wing_a_l."""
+        candidates = _scene_candidates_for_module("B_WNG_A")
+        parts_base = "models/common/spacecraft/biggs/modules/parts/"
+        assert candidates[0] == f"{parts_base}wing_a_l.scene.mbin"
+
+    # --- BUG_3: B_WNG_O prefix lost ---
+
+    def test_scene_candidates_wing_o_includes_o_prefix(self):
+        """B_WNG_O_1 must generate wing_o_1_l, not wing_1_l."""
+        candidates = _scene_candidates_for_module("B_WNG_O_1")
+        assert any("wing_o_1_l" in c for c in candidates)
+
+    def test_scene_candidates_wing_o_r_prefers_right(self):
+        """B_WNG_O_1_R must prefer wing_o_1_r."""
+        candidates = _scene_candidates_for_module("B_WNG_O_1_R")
+        assert any("wing_o_1_r" in c for c in candidates)
+        # Must NOT have wing_o_1_l as first candidate
+        r_idx = next(i for i, c in enumerate(candidates) if "wing_o_1_r" in c)
+        l_indices = [i for i, c in enumerate(candidates) if "wing_o_1_l" in c]
+        if l_indices:
+            assert r_idx < l_indices[0], "Right variant must come before left"
+
+    # --- BUG_4: B_CON_R missing handler ---
+
+    def test_scene_candidates_con_r_finds_right_connector(self):
+        """B_CON_R_0 must produce connector_1x1_r_0."""
+        candidates = _scene_candidates_for_module("B_CON_R_0")
+        assert any("connector_1x1_r_0" in c for c in candidates)
+
+    def test_scene_candidates_con_l_still_works(self):
+        """B_CON_L_0 must still produce connector_1x1_l_0."""
+        candidates = _scene_candidates_for_module("B_CON_L_0")
+        assert any("connector_1x1_l_0" in c for c in candidates)
+
+    # --- BUG_5: B_GEN missing generators/ subdirectory ---
+
+    def test_scene_candidates_gen_includes_subdirectory(self):
+        """B_GEN_0 must include generators/generator_1x1_0 candidate."""
+        candidates = _scene_candidates_for_module("B_GEN_0")
+        assert any("generators/generator_1x1_0" in c for c in candidates)
+
+    # --- BUG_6: B_TUR missing gun parts ---
+
+    def test_scene_candidates_tur_includes_gun_parts(self):
+        """B_TUR_A must include gun_a parts candidate."""
+        candidates = _scene_candidates_for_module("B_TUR_A")
+        parts_base = "models/common/spacecraft/biggs/modules/parts/"
+        assert f"{parts_base}gun_a.scene.mbin" in candidates
+
+    def test_scene_candidates_tur_c_includes_gun_c(self):
+        """B_TUR_C must include gun_c."""
+        candidates = _scene_candidates_for_module("B_TUR_C")
+        assert any("gun_c" in c for c in candidates)
+
+    # --- BUG_7: B_DECO should try decoration/{n} ---
+
+    def test_scene_candidates_deco_includes_decoration_subdir(self):
+        """B_DECO_A should include decoration/decoration_ candidates."""
+        candidates = _scene_candidates_for_module("B_DECO_A")
+        assert any("decoration/decoration_" in c for c in candidates)
