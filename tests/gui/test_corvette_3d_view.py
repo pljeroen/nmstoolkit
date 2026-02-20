@@ -31,6 +31,7 @@ from nmstoolkit.gui.widgets.corvette_3d_view import (
     _get_module_category,
     _get_module_color,
     _get_module_footprint,
+    _mat4_from_orientation,
     _mat4_identity,
     _mat4_multiply,
     _mat4_perspective,
@@ -919,3 +920,109 @@ class TestMeshDataScaling3d:
         mesh = self._make_mesh(6.0, 3.0, 12.0)
         view.set_mesh_data("B_COK_A", [mesh])
         assert "B_COK_A" not in view._mesh_cache
+
+
+# ---------------------------------------------------------------------------
+# CORVETTE-3D-03: Module orientation from Up/At vectors
+# ---------------------------------------------------------------------------
+
+
+class TestMat4FromOrientation:
+    """Build a column-major model matrix from Up/At + translation."""
+
+    def test_identity_orientation(self):
+        """Default Up=(0,1,0) At=(0,0,1) should produce identity rotation."""
+        m = _mat4_from_orientation(
+            up=(0, 1, 0), at=(0, 0, 1), tx=0, ty=0, tz=0,
+        )
+        assert m == pytest.approx(_mat4_identity())
+
+    def test_translation_in_last_column(self):
+        """Translation should appear at indices 12, 13, 14."""
+        m = _mat4_from_orientation(
+            up=(0, 1, 0), at=(0, 0, 1), tx=2.0, ty=3.0, tz=-1.0,
+        )
+        assert m[12] == pytest.approx(2.0)
+        assert m[13] == pytest.approx(3.0)
+        assert m[14] == pytest.approx(-1.0)
+        assert m[15] == pytest.approx(1.0)
+
+    def test_90_degree_yaw_left(self):
+        """At=(-1,0,0) means module faces -X (90° left from default +Z).
+
+        Column 0 (Right) should be (0,0,1).
+        Column 2 (At) should be (-1,0,0).
+        """
+        m = _mat4_from_orientation(
+            up=(0, 1, 0), at=(-1, 0, 0), tx=0, ty=0, tz=0,
+        )
+        # Column 0: Right
+        assert m[0] == pytest.approx(0.0)
+        assert m[1] == pytest.approx(0.0)
+        assert m[2] == pytest.approx(1.0)
+        # Column 1: Up
+        assert m[4] == pytest.approx(0.0)
+        assert m[5] == pytest.approx(1.0)
+        assert m[6] == pytest.approx(0.0)
+        # Column 2: At
+        assert m[8] == pytest.approx(-1.0)
+        assert m[9] == pytest.approx(0.0)
+        assert m[10] == pytest.approx(0.0)
+
+    def test_90_degree_yaw_right(self):
+        """At=(1,0,0) means module faces +X (90° right)."""
+        m = _mat4_from_orientation(
+            up=(0, 1, 0), at=(1, 0, 0), tx=0, ty=0, tz=0,
+        )
+        # Column 0: Right = cross(Up, At) = cross((0,1,0),(1,0,0)) = (0,0,-1)
+        assert m[0] == pytest.approx(0.0)
+        assert m[1] == pytest.approx(0.0)
+        assert m[2] == pytest.approx(-1.0)
+        # Column 2: At
+        assert m[8] == pytest.approx(1.0)
+        assert m[9] == pytest.approx(0.0)
+        assert m[10] == pytest.approx(0.0)
+
+    def test_orthonormal(self):
+        """Output columns should be orthonormal (dot products ≈ 0, lengths ≈ 1)."""
+        m = _mat4_from_orientation(
+            up=(0, 1, 0), at=(-1, 0, 0), tx=5, ty=6, tz=7,
+        )
+        rx, ry, rz = m[0], m[1], m[2]
+        ux, uy, uz = m[4], m[5], m[6]
+        ax, ay, az = m[8], m[9], m[10]
+        # Lengths
+        assert math.sqrt(rx*rx + ry*ry + rz*rz) == pytest.approx(1.0)
+        assert math.sqrt(ux*ux + uy*uy + uz*uz) == pytest.approx(1.0)
+        assert math.sqrt(ax*ax + ay*ay + az*az) == pytest.approx(1.0)
+        # Orthogonality
+        assert rx*ux + ry*uy + rz*uz == pytest.approx(0.0)
+        assert rx*ax + ry*ay + rz*az == pytest.approx(0.0)
+        assert ux*ax + uy*ay + uz*az == pytest.approx(0.0)
+
+
+class TestSetModules3dOrientation:
+    """set_modules_3d stores Up/At per module for orientation in paintGL."""
+
+    def _make_view(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        return Corvette3DView()
+
+    def test_stores_up_at_vectors(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0, 3, -3],
+             "Up": [0, 1, 0], "At": [-1, 0, 0]},
+        ])
+        mod = view._modules[0]
+        assert mod["_up"] == pytest.approx((0, 1, 0))
+        assert mod["_at"] == pytest.approx((-1, 0, 0))
+
+    def test_default_up_at_when_missing(self):
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0, 3, -3]},
+        ])
+        mod = view._modules[0]
+        assert mod["_up"] == pytest.approx((0, 1, 0))
+        assert mod["_at"] == pytest.approx((0, 0, 1))

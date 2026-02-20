@@ -331,6 +331,43 @@ def _mat4_translate(x: float, y: float, z: float) -> List[float]:
     ]
 
 
+def _mat4_from_orientation(
+    up: Tuple[float, float, float],
+    at: Tuple[float, float, float],
+    tx: float, ty: float, tz: float,
+) -> List[float]:
+    """Build a column-major 4x4 model matrix from Up/At vectors + translation.
+
+    NMS stores module orientation as Up (local Y) and At (local Z/forward).
+    Right (local X) is derived as cross(Up, At).  The three vectors form
+    the columns of the rotation part; translation fills column 3.
+    """
+    ux, uy, uz = up
+    ax, ay, az = at
+    # Right = cross(Up, At)
+    rx = uy * az - uz * ay
+    ry = uz * ax - ux * az
+    rz = ux * ay - uy * ax
+    # Normalize Right
+    mag = math.sqrt(rx * rx + ry * ry + rz * rz)
+    if mag > 1e-6:
+        rx, ry, rz = rx / mag, ry / mag, rz / mag
+    # Normalize At
+    mag = math.sqrt(ax * ax + ay * ay + az * az)
+    if mag > 1e-6:
+        ax, ay, az = ax / mag, ay / mag, az / mag
+    # Normalize Up
+    mag = math.sqrt(ux * ux + uy * uy + uz * uz)
+    if mag > 1e-6:
+        ux, uy, uz = ux / mag, uy / mag, uz / mag
+    return [
+        rx, ry, rz, 0,   # column 0: Right (local X)
+        ux, uy, uz, 0,   # column 1: Up (local Y)
+        ax, ay, az, 0,   # column 2: At (local Z / forward)
+        tx, ty, tz, 1,   # column 3: Translation
+    ]
+
+
 def _mat4_multiply(a: List[float], b: List[float]) -> List[float]:
     """Multiply two column-major 4x4 matrices."""
     result = [0.0] * 16
@@ -629,10 +666,15 @@ class Corvette3DView(QOpenGLWidget):
             s = _3D_VIEWPORT_SCALE
             rx, ry, rz = x * s, y * s, z * s
 
+            up_raw = obj.get("Up", [0.0, 1.0, 0.0])
+            at_raw = obj.get("At", [0.0, 0.0, 1.0])
+
             self._modules.append({
                 "Id": obj["ObjectID"],
                 "Index": {"X": 0, "Y": 0},
                 "_render_pos": (rx, ry, rz),
+                "_up": (float(up_raw[0]), float(up_raw[1]), float(up_raw[2])),
+                "_at": (float(at_raw[0]), float(at_raw[1]), float(at_raw[2])),
                 "_layer": 0,
                 "_layer_row": 0,
                 "_3d_world_pos": (x, y, z),
@@ -789,7 +831,9 @@ class Corvette3DView(QOpenGLWidget):
             render_pos = slot.get("_render_pos")
             if render_pos is not None:
                 mx, my, mz = render_pos
-                model = _mat4_translate(mx, my, mz)
+                up = slot.get("_up", (0, 1, 0))
+                at = slot.get("_at", (0, 0, 1))
+                model = _mat4_from_orientation(up, at, mx, my, mz)
                 is_selected = self._selected == (slot_idx, 0, 0)
             else:
                 idx = slot.get("Index", {})
