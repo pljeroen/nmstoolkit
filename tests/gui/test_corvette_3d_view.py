@@ -362,6 +362,26 @@ class TestFitMeshesToCell:
         assert cy == pytest.approx(0.0, abs=0.01)
         assert cz == pytest.approx(0.0, abs=0.01)
 
+    def test_cell_size_1_fits_to_unit(self):
+        """cell_size=1.0 scales mesh to fill 1.0 per footprint unit."""
+        mesh = self._make_mesh(5.0, 5.0)
+        fitted = _fit_meshes_to_cell([mesh], footprint=(1, 1), cell_size=1.0)
+        all_verts = [v for m in fitted for v in m.vertices]
+        max_dim = max(
+            max(v[i] for v in all_verts) - min(v[i] for v in all_verts)
+            for i in range(3)
+        )
+        assert max_dim == pytest.approx(1.0, abs=0.01)
+
+    def test_cell_size_1_1x2_extends_to_2(self):
+        """cell_size=1.0 with 1×2 footprint allows z-extent up to 2.0."""
+        mesh = self._make_mesh(5.0, 10.0)
+        fitted = _fit_meshes_to_cell([mesh], footprint=(1, 2), cell_size=1.0)
+        all_verts = [v for m in fitted for v in m.vertices]
+        zs = [v[2] for v in all_verts]
+        z_span = max(zs) - min(zs)
+        assert z_span == pytest.approx(2.0, abs=0.01)
+
 
 class TestMulticellOffset:
     """CORVETTE-LAYOUT-01: Multi-cell module positioning offset in 3D view."""
@@ -769,8 +789,8 @@ class TestViewportScaleConstant:
 
 
 class TestMeshDataScaling3d:
-    """In 3D mode, set_mesh_data scales meshes by viewport scale instead of
-    fitting them to grid cells."""
+    """In 3D mode, set_mesh_data fits meshes to footprint at cell_size=1.0
+    so modules fill the anchor-point spacing without gaps or overlap."""
 
     def _make_view(self):
         from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
@@ -790,49 +810,59 @@ class TestMeshDataScaling3d:
             indices=(0, 1, 2, 0, 2, 3),
         )
 
-    def test_3d_mode_scales_by_viewport_scale(self):
-        """In 3D mode, a 6.0-unit mesh should become 1.0 render-unit."""
+    def test_3d_mode_1x1_max_dimension_is_1(self):
+        """In 3D mode, a 1×1 module mesh max dimension should be 1.0 (not 0.9)."""
         view = self._make_view()
         view.set_modules_3d([
-            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_CON_A", "Position": [0.0, 3.0, -3.0]},
         ])
+        mesh = self._make_mesh(5.0, 5.0, 5.0)
+        view.set_mesh_data("B_CON_A", [mesh])
+        stored = view._mesh_data["B_CON_A"]
+        all_verts = [v for m in stored for v in m.vertices]
+        max_dim = max(
+            max(v[i] for v in all_verts) - min(v[i] for v in all_verts)
+            for i in range(3)
+        )
+        assert max_dim == pytest.approx(1.0, abs=0.01)
+
+    def test_3d_mode_1x2_allows_z_extent_2(self):
+        """In 3D mode, a 1×2 module (e.g. cockpit) can extend up to 2.0 in Z."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_B", "Position": [0.0, 3.0, -3.0]},
+        ])
+        # 6×3×12 mesh in a 1×2 footprint — aspect matches footprint perfectly
         mesh = self._make_mesh(6.0, 3.0, 12.0)
-        view.set_mesh_data("B_COK_A", [mesh])
-        stored = view._mesh_data["B_COK_A"]
+        view.set_mesh_data("B_COK_B", [mesh])
+        stored = view._mesh_data["B_COK_B"]
         all_verts = [v for m in stored for v in m.vertices]
         xs = [v[0] for v in all_verts]
-        ys = [v[1] for v in all_verts]
         zs = [v[2] for v in all_verts]
         x_span = max(xs) - min(xs)
-        y_span = max(ys) - min(ys)
         z_span = max(zs) - min(zs)
-        # 6.0 * (1/6) = 1.0, 3.0 * (1/6) = 0.5, 12.0 * (1/6) = 2.0
         assert x_span == pytest.approx(1.0, abs=0.01)
-        assert y_span == pytest.approx(0.5, abs=0.01)
         assert z_span == pytest.approx(2.0, abs=0.01)
 
     def test_3d_mode_preserves_aspect_ratio(self):
-        """Physical aspect ratio must be preserved — no axis-dependent squashing."""
+        """Aspect ratio preserved within footprint constraint."""
         view = self._make_view()
         view.set_modules_3d([
-            {"ObjectID": "^B_WNG_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_CON_A", "Position": [0.0, 3.0, -3.0]},
         ])
-        mesh = self._make_mesh(6.0, 7.0, 20.0)
-        view.set_mesh_data("B_WNG_A", [mesh])
-        stored = view._mesh_data["B_WNG_A"]
+        # Non-square mesh in 1×1 footprint — uniform scale preserves ratio
+        mesh = self._make_mesh(10.0, 5.0, 10.0)
+        view.set_mesh_data("B_CON_A", [mesh])
+        stored = view._mesh_data["B_CON_A"]
         all_verts = [v for m in stored for v in m.vertices]
         xs = [v[0] for v in all_verts]
         ys = [v[1] for v in all_verts]
-        zs = [v[2] for v in all_verts]
         x_span = max(xs) - min(xs)
         y_span = max(ys) - min(ys)
-        z_span = max(zs) - min(zs)
-        # Original ratio: 6:7:20 should be preserved after uniform scaling
-        assert z_span / x_span == pytest.approx(20.0 / 6.0, abs=0.1)
-        assert y_span / x_span == pytest.approx(7.0 / 6.0, abs=0.1)
+        assert y_span / x_span == pytest.approx(5.0 / 10.0, abs=0.05)
 
     def test_3d_mode_centers_mesh_at_origin(self):
-        """Scaled mesh should be centered at origin for correct anchor positioning."""
+        """Fitted mesh should be centered at origin for correct anchor positioning."""
         view = self._make_view()
         view.set_modules_3d([
             {"ObjectID": "^B_HAB_C", "Position": [0.0, 3.0, -3.0]},
@@ -848,20 +878,39 @@ class TestMeshDataScaling3d:
         assert cy == pytest.approx(0.0, abs=0.01)
         assert cz == pytest.approx(0.0, abs=0.01)
 
-    def test_2d_mode_still_uses_fit_to_cell(self):
-        """In 2D mode (draft), set_mesh_data behavior unchanged."""
+    def test_3d_mode_no_dimension_exceeds_footprint(self):
+        """No mesh dimension should exceed its footprint in 3D mode."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_B", "Position": [0.0, 3.0, -3.0]},
+        ])
+        # Oversized mesh (7×6×21) for a 1×2 cockpit
+        mesh = self._make_mesh(7.0, 6.0, 21.0)
+        view.set_mesh_data("B_COK_B", [mesh])
+        stored = view._mesh_data["B_COK_B"]
+        all_verts = [v for m in stored for v in m.vertices]
+        xs = [v[0] for v in all_verts]
+        ys = [v[1] for v in all_verts]
+        zs = [v[2] for v in all_verts]
+        # 1×2 footprint at cell_size=1.0 → max X=1.0, max Y=1.0, max Z=2.0
+        assert max(xs) - min(xs) <= 1.01
+        assert max(ys) - min(ys) <= 1.01
+        assert max(zs) - min(zs) <= 2.01
+
+    def test_2d_mode_still_uses_09_cell_size(self):
+        """In 2D mode (draft), set_mesh_data uses cell_size=0.9."""
         view = self._make_view()
         # Default mode is 2D (no set_modules_3d called)
-        mesh = self._make_mesh(6.0, 3.0, 12.0)
-        view.set_mesh_data("B_COK_A", [mesh])
-        stored = view._mesh_data["B_COK_A"]
+        mesh = self._make_mesh(5.0, 5.0, 5.0)
+        view.set_mesh_data("B_CON_A", [mesh])
+        stored = view._mesh_data["B_CON_A"]
         all_verts = [v for m in stored for v in m.vertices]
         max_dim = max(
             max(v[i] for v in all_verts) - min(v[i] for v in all_verts)
             for i in range(3)
         )
-        # _fit_meshes_to_cell caps at 0.9 * footprint — B_COK is 1×2 → max 1.8
-        assert max_dim <= 1.81
+        # 2D mode uses 0.9 cell_size
+        assert max_dim == pytest.approx(0.9, abs=0.01)
 
     def test_invalidates_gpu_cache(self):
         """set_mesh_data clears GPU cache for the module."""

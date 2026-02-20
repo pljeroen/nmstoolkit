@@ -443,16 +443,23 @@ def _merge_meshes(meshes: List[Mesh]) -> Mesh:
     )
 
 
-def _fit_meshes_to_cell(meshes: List[Mesh], footprint: Tuple[int, int] = (1, 1)) -> List[Mesh]:
+def _fit_meshes_to_cell(
+    meshes: List[Mesh],
+    footprint: Tuple[int, int] = (1, 1),
+    cell_size: float = 0.9,
+) -> List[Mesh]:
     """Scale/center meshes to fit their inventory cell footprint.
 
     The footprint (columns, rows) determines the target bounding box:
-    - X axis (columns): 0.9 * footprint[0]
-    - Y axis (height): 0.9
-    - Z axis (rows): 0.9 * footprint[1]
+    - X axis (columns): cell_size * footprint[0]
+    - Y axis (height): cell_size
+    - Z axis (rows): cell_size * footprint[1]
 
     Meshes are uniformly scaled to fit within this box while preserving
     aspect ratio, then centered at the origin.
+
+    cell_size defaults to 0.9 for 2D grid view.  In 3D mode use 1.0 so
+    modules fill the anchor-point spacing without gaps.
     """
     if not meshes:
         return meshes
@@ -472,9 +479,9 @@ def _fit_meshes_to_cell(meshes: List[Mesh], footprint: Tuple[int, int] = (1, 1))
     sz = max_z - min_z
 
     fw, fh = max(1, footprint[0]), max(1, footprint[1])
-    target_x = 0.9 * fw
-    target_y = 0.9
-    target_z = 0.9 * fh
+    target_x = cell_size * fw
+    target_y = cell_size
+    target_z = cell_size * fh
 
     # Uniform scale: fit the mesh into the target box preserving aspect ratio.
     # Scale each axis by target/extent, take the minimum to not exceed any axis.
@@ -510,53 +517,6 @@ def _fit_meshes_to_cell(meshes: List[Mesh], footprint: Tuple[int, int] = (1, 1))
             )
         )
     return fitted
-
-
-def _scale_meshes_3d(meshes: List[Mesh]) -> List[Mesh]:
-    """Scale and center meshes for 3D mode using uniform viewport scale.
-
-    Unlike _fit_meshes_to_cell (which squashes to a grid cell), this
-    applies _3D_VIEWPORT_SCALE uniformly to preserve physical proportions.
-    Meshes are centered at the origin so they render correctly at their
-    anchor position.
-    """
-    if not meshes:
-        return meshes
-    all_verts = [v for m in meshes for v in m.vertices]
-    if not all_verts:
-        return meshes
-
-    min_x = min(v[0] for v in all_verts)
-    min_y = min(v[1] for v in all_verts)
-    min_z = min(v[2] for v in all_verts)
-    max_x = max(v[0] for v in all_verts)
-    max_y = max(v[1] for v in all_verts)
-    max_z = max(v[2] for v in all_verts)
-
-    cx = (min_x + max_x) * 0.5
-    cy = (min_y + max_y) * 0.5
-    cz = (min_z + max_z) * 0.5
-
-    s = _3D_VIEWPORT_SCALE
-    scaled: List[Mesh] = []
-    for mesh in meshes:
-        verts = tuple(
-            (
-                (vx - cx) * s,
-                (vy - cy) * s,
-                (vz - cz) * s,
-            )
-            for vx, vy, vz in mesh.vertices
-        )
-        scaled.append(
-            Mesh(
-                vertices=verts,
-                normals=mesh.normals,
-                uvs=mesh.uvs,
-                indices=mesh.indices,
-            )
-        )
-    return scaled
 
 
 # ---------------------------------------------------------------------------
@@ -699,11 +659,15 @@ class Corvette3DView(QOpenGLWidget):
 
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
+        footprint = _get_module_footprint(module_id)
         if self._is_3d_mode:
-            self._mesh_data[module_id] = _scale_meshes_3d(meshes)
+            self._mesh_data[module_id] = _fit_meshes_to_cell(
+                meshes, footprint=footprint, cell_size=1.0,
+            )
         else:
-            footprint = _get_module_footprint(module_id)
-            self._mesh_data[module_id] = _fit_meshes_to_cell(meshes, footprint=footprint)
+            self._mesh_data[module_id] = _fit_meshes_to_cell(
+                meshes, footprint=footprint,
+            )
         # Invalidate cached GPU mesh so it gets re-uploaded
         self._mesh_cache.pop(module_id, None)
 
