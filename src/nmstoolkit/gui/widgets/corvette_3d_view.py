@@ -391,6 +391,16 @@ def _is_identity_orientation(
     return True
 
 
+# Mesh bounding-box center (cx, cy, cz) per ALK variant, measured from
+# cached mesh data.  The correction matrix compensates for the mesh's
+# asymmetric origin so the module stays flush after 180° Y rotation.
+_ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
+    "B_ALK_A": (0.284, 0.669, 1.513),
+    # B_ALK_B: no cached mesh data yet — defaults to (0, 0, 0)
+    # B_ALK_C: needs measurement — defaults to (0, 0, 0)
+}
+
+
 def _module_mesh_correction(
     module_id: str,
     mod_x: float = 0.0,
@@ -412,13 +422,16 @@ def _module_mesh_correction(
     if stripped.startswith("B_TUR"):
         return _turret_correction(mod_x)
 
-    # Airlock corrections based on Z relative to cockpit
+    # Airlock corrections based on Z relative to cockpit.
+    # 180° Y rotation around the mesh center, not the origin, so the module
+    # stays connected to its neighbor after flipping.
     if stripped.startswith("B_ALK_") and cok_z is not None and mod_z < cok_z:
+        cx, cy, cz = _ALK_MESH_CENTER.get(stripped, (0.0, 0.0, 0.0))
         return [
             -1, 0, 0, 0,
              0, 1, 0, 0,
              0, 0,-1, 0,
-             0, 0, 0, 1,
+             -2 * cx, 2 * cy, -2 * cz, 1,
         ]
 
     return _mat4_identity()
