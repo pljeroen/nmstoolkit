@@ -15,6 +15,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from nmstoolkit.gui.widgets.corvette_3d_view import (
+    _is_identity_orientation,
     _mat4_identity,
     _mat4_multiply,
     _module_mesh_correction,
@@ -207,6 +208,118 @@ class TestAlkZOffsetRemoved:
             "^B_ALK_A", mod_x=0.0, mod_y=3.0, mod_z=-15.0, cok_z=None,
         )
         assert corr == pytest.approx(_mat4_identity())
+
+
+# ---------------------------------------------------------------------------
+# WI-2b: Face-connection orientation (Up/At vectors)
+# ---------------------------------------------------------------------------
+
+
+class TestIdentityOrientationDetection:
+    """Detect whether Up/At vectors are identity (default) or face-encoded."""
+
+    def test_identity_up_at(self):
+        assert _is_identity_orientation((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)) is True
+
+    def test_reversed_at_is_not_identity(self):
+        """At=[0,0,-1] means 'faces backward' — not identity."""
+        assert _is_identity_orientation((0.0, 1.0, 0.0), (0.0, 0.0, -1.0)) is False
+
+    def test_rotated_up_is_not_identity(self):
+        assert _is_identity_orientation((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)) is False
+
+    def test_small_float_noise_is_identity(self):
+        """Values within epsilon of identity still count as identity."""
+        assert _is_identity_orientation(
+            (0.0001, 1.0, -0.0001), (0.0, 0.0001, 0.9999)
+        ) is True
+
+    def test_significant_deviation_is_not_identity(self):
+        assert _is_identity_orientation(
+            (0.0, 0.99, 0.0), (0.0, 0.0, 1.0)
+        ) is False
+
+
+class TestFaceConnectionSkipsCorrection:
+    """When Up/At encode face-connection, correction heuristic is skipped."""
+
+    def _make_view(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        return Corvette3DView()
+
+    def test_alk_with_reversed_at_gets_identity_correction(self):
+        """ALK aft with At=[0,0,-1] — save encodes rotation, skip heuristic."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {
+                "ObjectID": "^B_ALK_A",
+                "Position": [0.0, 3.0, -15.0],
+                "Up": [0.0, 1.0, 0.0],
+                "At": [0.0, 0.0, -1.0],
+            },
+        ])
+        alk = view._modules[1]
+        # Correction should be identity — the At vector already handles rotation
+        assert alk["_correction"] == pytest.approx(_mat4_identity())
+
+    def test_alk_with_identity_at_gets_heuristic_correction(self):
+        """ALK aft with identity At — fallback heuristic fires."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {
+                "ObjectID": "^B_ALK_A",
+                "Position": [0.0, 3.0, -15.0],
+                "Up": [0.0, 1.0, 0.0],
+                "At": [0.0, 0.0, 1.0],
+            },
+        ])
+        alk = view._modules[1]
+        # Heuristic fires: 180 Y rotation
+        assert alk["_correction"][0] == pytest.approx(-1.0)
+        assert alk["_correction"][10] == pytest.approx(-1.0)
+
+    def test_alk_with_default_at_gets_heuristic_correction(self):
+        """ALK aft with no Up/At (defaults to identity) — heuristic fires."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_ALK_A", "Position": [0.0, 3.0, -15.0]},
+        ])
+        alk = view._modules[1]
+        assert alk["_correction"][0] == pytest.approx(-1.0)
+
+    def test_turret_with_rotated_up_gets_identity_correction(self):
+        """Turret with non-identity Up — save encodes rotation, skip heuristic."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {
+                "ObjectID": "^B_TUR_A",
+                "Position": [3.0, 4.5, -6.0],
+                "Up": [1.0, 0.0, 0.0],
+                "At": [0.0, 0.0, 1.0],
+            },
+        ])
+        tur = view._modules[1]
+        assert tur["_correction"] == pytest.approx(_mat4_identity())
+
+    def test_turret_with_identity_up_gets_heuristic_correction(self):
+        """Turret with identity Up/At — fallback heuristic fires."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {
+                "ObjectID": "^B_TUR_A",
+                "Position": [3.0, 4.5, -6.0],
+                "Up": [0.0, 1.0, 0.0],
+                "At": [0.0, 0.0, 1.0],
+            },
+        ])
+        tur = view._modules[1]
+        # Heuristic fires: starboard -90 Z rotation
+        assert tur["_correction"][1] == pytest.approx(-1.0)
 
 
 # ---------------------------------------------------------------------------

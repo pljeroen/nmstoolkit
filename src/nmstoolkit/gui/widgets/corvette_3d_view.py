@@ -365,6 +365,32 @@ def _turret_correction(mod_x: float) -> List[float]:
     return _mat4_identity()
 
 
+_IDENTITY_UP = (0.0, 1.0, 0.0)
+_IDENTITY_AT = (0.0, 0.0, 1.0)
+_ORIENT_EPS = 1e-3
+
+
+def _is_identity_orientation(
+    up: Tuple[float, float, float],
+    at: Tuple[float, float, float],
+) -> bool:
+    """Return True when Up/At are the default identity orientation.
+
+    When the game stores non-identity Up/At on a module, those vectors
+    encode which face of the parent block the module was connected to.
+    In that case the orientation already contains the correct rotation
+    and position-based correction heuristics must be skipped to avoid
+    double-rotating.
+    """
+    for a, b in zip(up, _IDENTITY_UP):
+        if abs(a - b) > _ORIENT_EPS:
+            return False
+    for a, b in zip(at, _IDENTITY_AT):
+        if abs(a - b) > _ORIENT_EPS:
+            return False
+    return True
+
+
 def _module_mesh_correction(
     module_id: str,
     mod_x: float = 0.0,
@@ -773,7 +799,10 @@ class Corvette3DView(QOpenGLWidget):
             up = (float(up_raw[0]), float(up_raw[1]), float(up_raw[2]))
             at = (float(at_raw[0]), float(at_raw[1]), float(at_raw[2]))
 
-            correction = _module_mesh_correction(obj["ObjectID"], mod_x=x, mod_y=y, mod_z=z, cok_z=cok_z)
+            if _is_identity_orientation(up, at):
+                correction = _module_mesh_correction(obj["ObjectID"], mod_x=x, mod_y=y, mod_z=z, cok_z=cok_z)
+            else:
+                correction = _mat4_identity()
 
             self._modules.append({
                 "Id": obj["ObjectID"],
