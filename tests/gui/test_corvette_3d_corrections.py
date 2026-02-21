@@ -1,8 +1,10 @@
-"""Tests for CORVETTE-3D-09: position-based orientation & editing controls.
+"""Tests for CORVETTE-3D: position-based orientation & editing controls.
 
 Covers:
 - Turret rotation corrections based on module X position
-- ALK Z-offset removal (keep 180 Y rotation, dz=0)
+- ALK 180 Y rotation with center offset compensation
+- Landing gear translation correction (mesh offset)
+- Face-connection orientation (Up/At identity detection)
 - 3D module selection by slot index
 - Module editing panel in corvette tab
 """
@@ -212,6 +214,58 @@ class TestAlkZOffsetRemoved:
             "^B_ALK_A", mod_x=0.0, mod_y=3.0, mod_z=-15.0, cok_z=None,
         )
         assert corr == pytest.approx(_mat4_identity())
+
+
+# ---------------------------------------------------------------------------
+# WI-2c: Landing gear translation correction
+# ---------------------------------------------------------------------------
+
+
+class TestLandingGearCorrection:
+    """Landing gear mesh has center at (0, -1.691, -0.223).
+
+    The mesh hangs below the snap point, but the offset creates a visible
+    gap between the gear and the hull it connects to.  A pure translation
+    correction shifts the mesh to close the gap.
+    """
+
+    def test_lnd_a_gets_translation_correction(self):
+        """B_LND_A gets translation-only correction (no rotation)."""
+        corr = _module_mesh_correction(
+            "^B_LND_A", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
+        )
+        # No rotation — diagonal stays identity
+        assert corr[0] == pytest.approx(1.0)
+        assert corr[5] == pytest.approx(1.0)
+        assert corr[10] == pytest.approx(1.0)
+        # Translation compensates for mesh center offset
+        assert corr[12] == pytest.approx(0.0)     # dx = 0 (centered in X)
+        assert corr[13] == pytest.approx(1.691)    # dy = -cy (shift up)
+        assert corr[14] == pytest.approx(0.223)    # dz = -cz (shift forward)
+
+    def test_lnd_without_caret(self):
+        """B_LND_A without caret prefix also gets correction."""
+        corr = _module_mesh_correction(
+            "B_LND_A", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
+        )
+        assert corr[13] == pytest.approx(1.691)
+
+    def test_lnd_unknown_variant_gets_identity(self):
+        """B_LND_B (no cached mesh data) → identity fallback."""
+        corr = _module_mesh_correction(
+            "^B_LND_B", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
+        )
+        assert corr == pytest.approx(_mat4_identity())
+
+    def test_lnd_correction_independent_of_position(self):
+        """Landing gear correction is the same regardless of position."""
+        corr1 = _module_mesh_correction(
+            "^B_LND_A", mod_x=6.0, mod_y=3.0, mod_z=-18.0, cok_z=-3.0,
+        )
+        corr2 = _module_mesh_correction(
+            "^B_LND_A", mod_x=-6.0, mod_y=0.0, mod_z=-6.0, cok_z=-3.0,
+        )
+        assert corr1 == pytest.approx(corr2)
 
 
 # ---------------------------------------------------------------------------

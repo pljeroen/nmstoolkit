@@ -401,6 +401,15 @@ _ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
 }
 
 
+# Mesh bounding-box center (cx, cy, cz) per landing gear variant.
+# The mesh origin is offset from the connection surface; a pure translation
+# shifts the mesh to close the gap between gear and hull.
+_LND_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
+    "B_LND_A": (0.0, -1.691, -0.223),
+    # B_LND_B through E: need measurement from cached mesh data
+}
+
+
 def _module_mesh_correction(
     module_id: str,
     mod_x: float = 0.0,
@@ -433,6 +442,18 @@ def _module_mesh_correction(
              0, 0,-1, 0,
              -2 * cx, 2 * cy, -2 * cz, 1,
         ]
+
+    # Landing gear: pure translation to compensate mesh origin offset.
+    if stripped.startswith("B_LND_"):
+        offset = _LND_MESH_CENTER.get(stripped)
+        if offset is not None:
+            cx, cy, cz = offset
+            return [
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                -cx, -cy, -cz, 1,
+            ]
 
     return _mat4_identity()
 

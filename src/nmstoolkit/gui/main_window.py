@@ -1017,14 +1017,22 @@ class MainWindow(QMainWindow):
         self._load_account(Path(path))
 
     def _load_save(self, path: Path):
+        self.statusBar().showMessage(f"Loading {path.name}...")
+        QApplication.processEvents()
+
         try:
             sf = SaveFile.load(path, KEY_MAP_PATH)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load save:\n{e}")
+            self.statusBar().showMessage("Load failed")
             return
 
         self._save_file = sf
         self._save_path = path
+
+        self.statusBar().showMessage(f"Populating editors...")
+        QApplication.processEvents()
+
         self._update_main_tab()
         self._populate_tabs()
 
@@ -1076,26 +1084,54 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"No {context} context data available")
             return
 
+        status = self.statusBar()
+
+        status.showMessage("Loading exosuit...")
+        QApplication.processEvents()
         self._exosuit_tab.set_data(psd)
+
+        status.showMessage("Loading ships...")
+        QApplication.processEvents()
         self._ships_tab.set_data(psd)
         self._corvette_tab.set_data(psd)
+
+        status.showMessage("Loading multitools & squadron...")
+        QApplication.processEvents()
         self._multitools_tab.set_data(psd)
         self._squadron_tab.set_data(psd)
+
+        status.showMessage("Loading freighter & fleet...")
+        QApplication.processEvents()
         self._freighter_tab.set_data(psd)
         self._frigates_tab.set_data(psd)
+
+        status.showMessage("Loading vehicles & companions...")
+        QApplication.processEvents()
         self._vehicles_tab.set_data(psd)
         self._companions_tab.set_data(psd)
+
+        status.showMessage("Loading bases & settlements...")
+        QApplication.processEvents()
         self._bases_tab.set_data(psd)
         self._fossils_tab.set_data(psd)
         self._settlements_tab.set_data(psd)
+
+        status.showMessage("Loading discoveries & milestones...")
+        QApplication.processEvents()
         self._discoveries_tab.set_data(sf.data.get("DiscoveryManagerData", {}))
         self._discoveries_tab.set_player_state(psd)
         self._milestones_tab.set_data(psd)
+
+        status.showMessage("Loading expedition & tools...")
+        QApplication.processEvents()
         self._expedition_tab.set_data(
             psd, common_state=sf.data.get("CommonStateData", {})
         )
         self._recipe_finder_tab.set_data(psd)
         self._fish_finder_tab.set_data(psd)
+
+        status.showMessage("Loading JSON editor...")
+        QApplication.processEvents()
         self._json_tab.set_data(sf.data)
 
     def _on_context_changed(self, index):
