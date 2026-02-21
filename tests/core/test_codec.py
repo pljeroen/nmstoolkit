@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from nmstoolkit.core.codec import (
@@ -254,7 +254,7 @@ json_values = st.recursive(
 
 class TestHypothesisCodec:
     @given(data=st.dictionaries(st.text(min_size=1, max_size=10), json_values, max_size=5))
-    @settings(max_examples=50)
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
     def test_compress_decompress_roundtrip(self, data):
         json_str = json.dumps(data, separators=(",", ":"))
         compressed = compress_hg(json_str)

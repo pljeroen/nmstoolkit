@@ -127,6 +127,25 @@ def _extract_hull_modules_3d(base: dict) -> List[dict]:
     return result
 
 
+def _extract_hull_objects_raw(base: dict) -> List[dict]:
+    """Return original Objects[] dict references for hull modules.
+
+    Same filtering as _extract_hull_modules_3d but returns the original
+    dicts from base["Objects"] so mutations write back to the save data.
+    Order matches _extract_hull_modules_3d output.
+    """
+    result: List[dict] = []
+    for obj in base.get("Objects", []):
+        object_id = obj.get("ObjectID", "")
+        if not _is_hull_module(object_id):
+            continue
+        pos = obj.get("Position")
+        if not isinstance(pos, list) or len(pos) < 3:
+            continue
+        result.append(obj)
+    return result
+
+
 def _inventory_has_data(inv: dict) -> bool:
     if not isinstance(inv, dict):
         return False
@@ -419,6 +438,8 @@ class CorvetteTab(QWidget):
         self._data = None
         self._corvettes = []  # List of (index, ship_dict) for completed corvettes
         self._current_index = -1  # Index into self._corvettes, -1 = draft
+        self._selected_base_object: Optional[dict] = None
+        self._hull_base_objects: List[dict] = []  # Original Objects[] refs for mutation
         self._build_ui()
 
     def _build_ui(self):
@@ -500,6 +521,43 @@ class CorvetteTab(QWidget):
         self._summary_label.setWordWrap(True)
         summary_layout.addWidget(self._summary_label)
         left_layout.addWidget(self._summary_group)
+
+        # Module editing panel (3D mode)
+        self._edit_group = QGroupBox("Selected Module")
+        self._edit_group.setVisible(False)
+        edit_layout = QFormLayout(self._edit_group)
+
+        self._mod_type_label = QLabel("—")
+        edit_layout.addRow("Type:", self._mod_type_label)
+
+        self._mod_cat_label = QLabel("—")
+        edit_layout.addRow("Category:", self._mod_cat_label)
+
+        self._mod_pos_label = QLabel("—")
+        edit_layout.addRow("Position:", self._mod_pos_label)
+
+        move_layout = QHBoxLayout()
+        self._move_xp_btn = QPushButton("+X")
+        self._move_xn_btn = QPushButton("-X")
+        self._move_yp_btn = QPushButton("+Y")
+        self._move_yn_btn = QPushButton("-Y")
+        self._move_zp_btn = QPushButton("+Z")
+        self._move_zn_btn = QPushButton("-Z")
+        for btn in (self._move_xp_btn, self._move_xn_btn,
+                    self._move_yp_btn, self._move_yn_btn,
+                    self._move_zp_btn, self._move_zn_btn):
+            btn.setFixedHeight(28)
+            btn.setFixedWidth(36)
+            move_layout.addWidget(btn)
+        self._move_xp_btn.clicked.connect(lambda: self._move_module(0, 3.0))
+        self._move_xn_btn.clicked.connect(lambda: self._move_module(0, -3.0))
+        self._move_yp_btn.clicked.connect(lambda: self._move_module(1, 3.0))
+        self._move_yn_btn.clicked.connect(lambda: self._move_module(1, -3.0))
+        self._move_zp_btn.clicked.connect(lambda: self._move_module(2, 3.0))
+        self._move_zn_btn.clicked.connect(lambda: self._move_module(2, -3.0))
+        edit_layout.addRow("Move:", move_layout)
+
+        left_layout.addWidget(self._edit_group)
 
         left_layout.addStretch()
         layout.addWidget(left)
@@ -624,6 +682,7 @@ class CorvetteTab(QWidget):
                 try:
                     from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
                     self._3d_view = Corvette3DView()
+                    self._3d_view.module_selected.connect(self._on_module_selected_3d)
                     self._draft_stack.removeWidget(self._3d_placeholder)
                     self._3d_placeholder.deleteLater()
                     self._3d_placeholder = None
@@ -1001,6 +1060,8 @@ class CorvetteTab(QWidget):
             if base is not None:
                 hull_modules = _extract_hull_modules_3d(base)
                 if hull_modules:
+                    # Store original base Objects for editing panel mutation
+                    self._hull_base_objects = _extract_hull_objects_raw(base)
                     self._3d_view.set_modules_3d(hull_modules)
                     # Build pseudo-inventory for mesh loading
                     mesh_inv = {
@@ -1010,6 +1071,7 @@ class CorvetteTab(QWidget):
                     self._3d_view.update()
                     return
         # Draft or fallback: use inventory grid
+        self._hull_base_objects = []
         selected_inv = self._selected_inventory_for_3d()
         if selected_inv is not None:
             self._3d_view.set_modules(selected_inv)
@@ -1065,3 +1127,42 @@ class CorvetteTab(QWidget):
                 return
         base_stats.append({"BaseStatID": stat_id, "Value": value})
         inv["BaseStatValues"] = base_stats
+
+    def _on_module_selected_3d(self, slot_idx: int, _unused: int, module_id: str) -> None:
+        """Handle module selection from 3D view."""
+        self._mod_type_label.setText(module_id)
+        self._mod_cat_label.setText(_get_module_category(module_id))
+        self._edit_group.setVisible(True)
+
+        # Find the original base object for direct mutation
+        if 0 <= slot_idx < len(self._hull_base_objects):
+            obj = self._hull_base_objects[slot_idx]
+            self._selected_base_object = obj
+            pos = obj.get("Position", [0, 0, 0])
+            self._mod_pos_label.setText(
+                f"({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})"
+            )
+        else:
+            self._selected_base_object = None
+            self._mod_pos_label.setText("—")
+
+    def _move_module(self, axis: int, delta: float) -> None:
+        """Move the selected module along an axis by delta units.
+
+        Args:
+            axis: 0=X, 1=Y, 2=Z
+            delta: Amount to move (typically ±3.0 for one grid cell)
+        """
+        obj = self._selected_base_object
+        if obj is None:
+            return
+        pos = obj.get("Position")
+        if not isinstance(pos, list) or len(pos) < 3:
+            return
+        pos[axis] += delta
+        self._mod_pos_label.setText(
+            f"({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})"
+        )
+        # Refresh 3D view with updated positions
+        if self._3d_view is not None:
+            self._feed_3d_view(force_reload=False)

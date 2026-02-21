@@ -1015,15 +1015,15 @@ class TestSetModules3dOrientation:
 class TestModuleMeshCorrection:
     """Per-module mesh rotation corrections — position-aware."""
 
-    def test_alk_aft_gets_180_rotation_with_z_offset(self):
-        """ALK_A behind cockpit gets 180° Y + Z-offset for mesh asymmetry."""
+    def test_alk_aft_gets_180_rotation(self):
+        """ALK_A behind cockpit gets 180° Y rotation, no Z-offset."""
         # COK at Z=-3, ALK at Z=-15 (behind)
         corr = _module_mesh_correction("^B_ALK_A", mod_z=-15.0, cok_z=-3.0)
         assert corr[0] == pytest.approx(-1.0)   # col0.x flipped
         assert corr[5] == pytest.approx(1.0)    # col1.y unchanged
         assert corr[10] == pytest.approx(-1.0)  # col2.z flipped
-        # Z translation compensates for mesh center offset (2 * 1.513)
-        assert corr[14] == pytest.approx(3.026, abs=0.01)
+        # No Z-offset compensation
+        assert corr[14] == pytest.approx(0.0)
 
     def test_alk_front_gets_identity(self):
         """ALK in front of cockpit keeps identity."""
@@ -1039,11 +1039,11 @@ class TestModuleMeshCorrection:
         assert corr[0] == pytest.approx(-1.0)
         assert corr[14] == pytest.approx(0.0)  # unknown variant, no offset
 
-    def test_alk_c_aft_gets_180_with_z_offset(self):
-        """ALK_C behind cockpit gets 180° + Z-offset (2 * -0.75 = -1.5)."""
+    def test_alk_c_aft_gets_180_no_z_offset(self):
+        """ALK_C behind cockpit gets 180° Y rotation, no Z-offset."""
         corr = _module_mesh_correction("B_ALK_C", mod_z=-6.0, cok_z=0.0)
         assert corr[0] == pytest.approx(-1.0)
-        assert corr[14] == pytest.approx(-1.5, abs=0.01)
+        assert corr[14] == pytest.approx(0.0)
 
     def test_non_alk_returns_identity(self):
         """Other modules always get identity regardless of position."""

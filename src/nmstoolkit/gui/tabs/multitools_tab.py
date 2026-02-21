@@ -185,6 +185,7 @@ class MultitoolsTab(QWidget):
 
         self._active_label.setText("Yes" if index == self._active_index else "No")
         self._inv_store.set_inventory(store if isinstance(store, dict) else {})
+        self._update_preview_identity(mt)
         if self._tabs.currentWidget() is self._preview_tab:
             self._update_preview(mt)
         else:
@@ -307,7 +308,7 @@ class MultitoolsTab(QWidget):
     def _load_preview_meshes(self, resource_filename: str):
         return load_template_preview_meshes(resource_filename)
 
-    def _update_preview(self, multitool: dict) -> None:
+    def _update_preview_identity(self, multitool: dict) -> None:
         resource = find_scene_resource_filename(multitool)
         seed = seed_to_text(multitool.get("Seed"))
         if seed == "—":
@@ -315,6 +316,10 @@ class MultitoolsTab(QWidget):
             if isinstance(resource_obj, dict):
                 seed = seed_to_text(resource_obj.get("Seed"))
         self._preview_identity.setText(f"Seed: {seed}\nResource: {resource or '—'}")
+
+    def _update_preview(self, multitool: dict) -> None:
+        self._update_preview_identity(multitool)
+        resource = find_scene_resource_filename(multitool)
         self._preview_fidelity.setText(
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )

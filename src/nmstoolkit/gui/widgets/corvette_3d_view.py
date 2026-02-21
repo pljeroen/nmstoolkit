@@ -331,16 +331,44 @@ def _mat4_translate(x: float, y: float, z: float) -> List[float]:
     ]
 
 
-# Mesh Z-center offsets per ALK variant.  Used to compensate for asymmetric
-# meshes when rotating 180° around Y so the bounding volume stays in place.
-_ALK_Z_CENTER: Dict[str, float] = {
-    "B_ALK_A": 1.513,
-    "B_ALK_C": -0.750,
-}
+def _turret_correction(mod_x: float) -> List[float]:
+    """Return a Z-axis rotation matrix for a turret based on X position.
+
+    Turret meshes have the gun pointing +Y.  Side-mounted turrets need
+    Z-axis rotation so the gun points outward (±X).
+
+    Detection uses grid alignment: half-grid X (round(x) % 6 != 0) means
+    side-mount.  Full-grid X at hull edge (|X| >= 6) also faces outward.
+    Center (X=0) keeps identity.
+    """
+    rx = round(mod_x)
+    is_half_grid = (rx % 6) != 0
+    is_edge = abs(rx) >= 6
+
+    if is_half_grid or is_edge:
+        if mod_x > 0:
+            # Starboard: -90 deg Z → gun faces +X
+            return [
+                 0, -1, 0, 0,
+                 1,  0, 0, 0,
+                 0,  0, 1, 0,
+                 0,  0, 0, 1,
+            ]
+        elif mod_x < 0:
+            # Port: +90 deg Z → gun faces -X
+            return [
+                 0,  1, 0, 0,
+                -1,  0, 0, 0,
+                 0,  0, 1, 0,
+                 0,  0, 0, 1,
+            ]
+    return _mat4_identity()
 
 
 def _module_mesh_correction(
     module_id: str,
+    mod_x: float = 0.0,
+    mod_y: float = 0.0,
     mod_z: float = 0.0,
     cok_z: Optional[float] = None,
 ) -> List[float]:
@@ -348,20 +376,25 @@ def _module_mesh_correction(
 
     Airlock (ALK) meshes face +Z in the scene file.  When placed aft of the
     cockpit they need a 180° Y rotation so the entrance faces the ship body.
-    A Z translation of ``2 * center_z`` compensates for mesh asymmetry so the
-    bounding volume stays aligned with the placement point.
-    Front-facing airlocks keep identity.
+
+    Turret (TUR) meshes have the gun pointing +Y.  Side-mounted turrets
+    get Z-axis rotation based on their X position to face outward.
     """
     stripped = module_id.lstrip("^")
+
+    # Turret corrections based on X position
+    if stripped.startswith("B_TUR"):
+        return _turret_correction(mod_x)
+
+    # Airlock corrections based on Z relative to cockpit
     if stripped.startswith("B_ALK_") and cok_z is not None and mod_z < cok_z:
-        variant = stripped[:7]  # "B_ALK_A", "B_ALK_B", or "B_ALK_C"
-        dz = 2.0 * _ALK_Z_CENTER.get(variant, 0.0)
         return [
             -1, 0, 0, 0,
              0, 1, 0, 0,
              0, 0,-1, 0,
-             0, 0, dz, 1,
+             0, 0, 0, 1,
         ]
+
     return _mat4_identity()
 
 
@@ -740,7 +773,7 @@ class Corvette3DView(QOpenGLWidget):
             up = (float(up_raw[0]), float(up_raw[1]), float(up_raw[2]))
             at = (float(at_raw[0]), float(at_raw[1]), float(at_raw[2]))
 
-            correction = _module_mesh_correction(obj["ObjectID"], mod_z=z, cok_z=cok_z)
+            correction = _module_mesh_correction(obj["ObjectID"], mod_x=x, mod_y=y, mod_z=z, cok_z=cok_z)
 
             self._modules.append({
                 "Id": obj["ObjectID"],
@@ -1251,12 +1284,19 @@ class Corvette3DView(QOpenGLWidget):
         self._mouse_button = event.button()
         picked = self._pick_module_at_screen(self._last_mouse_pos)
         if picked is not None:
-            idx = picked.get("Index", {})
-            x = idx.get("X", 0)
-            z = int(picked.get("_layer_row", idx.get("Y", 0)))
-            layer = int(picked.get("_layer", 0))
-            self._selected = (x, z, layer)
-            self.module_selected.emit(x, z, str(picked.get("Id", "")).lstrip("^"))
+            if picked.get("_render_pos") is not None:
+                # 3D mode: select by slot index
+                slot_idx = self._modules.index(picked)
+                self._selected = (slot_idx, 0, 0)
+                self.module_selected.emit(slot_idx, 0, str(picked.get("Id", "")).lstrip("^"))
+            else:
+                # 2D mode: select by grid coordinates
+                idx = picked.get("Index", {})
+                x = idx.get("X", 0)
+                z = int(picked.get("_layer_row", idx.get("Y", 0)))
+                layer = int(picked.get("_layer", 0))
+                self._selected = (x, z, layer)
+                self.module_selected.emit(x, z, str(picked.get("Id", "")).lstrip("^"))
             QToolTip.showText(event.globalPosition().toPoint(), self._slot_tooltip(picked), self)
             self.update()
         super().mousePressEvent(event)

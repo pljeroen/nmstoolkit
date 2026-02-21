@@ -470,6 +470,7 @@ class ShipsTab(QWidget):
         cargo_inv = ship.get("Inventory_Cargo", {})
         self._inv_cargo.set_inventory(cargo_inv)
         self._inv_tabs.setTabVisible(self._cargo_tab_index, _inventory_has_data(cargo_inv))
+        self._update_preview_identity(ship)
         cw = self._inv_tabs.currentWidget()
         if cw is self._preview_tab:
             self._update_preview(ship)
@@ -603,7 +604,7 @@ class ShipsTab(QWidget):
         self._preview_placeholder.hide()
         self._preview_view.show()
 
-    def _update_preview(self, ship: dict) -> None:
+    def _update_preview_identity(self, ship: dict) -> None:
         resource_obj = ship.get("Resource", {})
         if not isinstance(resource_obj, dict):
             resource_obj = {}
@@ -616,6 +617,13 @@ class ShipsTab(QWidget):
                 seed = _seed_to_text(inv_layout.get("Seed"))
         resource = resource_obj.get("Filename", "")
         self._preview_identity.setText(f"Seed: {seed}\nResource: {resource or '—'}")
+
+    def _update_preview(self, ship: dict) -> None:
+        self._update_preview_identity(ship)
+        resource_obj = ship.get("Resource", {})
+        if not isinstance(resource_obj, dict):
+            resource_obj = {}
+        resource = resource_obj.get("Filename", "")
         self._preview_fidelity.setText(
             "Fidelity: template-level preview (seed/resource shown; exact procedural reconstruction not guaranteed)"
         )
