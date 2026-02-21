@@ -3,6 +3,7 @@
 Covers:
 - Turret rotation corrections based on module X position
 - ALK 180 Y rotation with center offset compensation
+- ALK ramp sub-mesh filtering
 - Landing gear translation correction (mesh offset)
 - Face-connection orientation (Up/At identity detection)
 - 3D module selection by slot index
@@ -16,7 +17,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from nmstoolkit.core.mesh_data import Mesh
 from nmstoolkit.gui.widgets.corvette_3d_view import (
+    _filter_alk_ramp,
     _is_identity_orientation,
     _mat4_identity,
     _mat4_multiply,
@@ -171,10 +174,10 @@ class TestAlkZOffsetRemoved:
         assert corr[0] == pytest.approx(-1.0)
         assert corr[5] == pytest.approx(1.0)
         assert corr[10] == pytest.approx(-1.0)
-        # Translation compensates for mesh center (cx=0.284, cy=0.669, cz=1.513)
+        # Translation compensates for mesh center (cx=0.284, cy=0.023, cz=0.125)
         assert corr[12] == pytest.approx(-2 * 0.284)   # dx = -2*cx
-        assert corr[13] == pytest.approx(2 * 0.669)    # dy = 2*cy
-        assert corr[14] == pytest.approx(-2 * 1.513)   # dz = -2*cz
+        assert corr[13] == pytest.approx(2 * 0.023)    # dy = 2*cy
+        assert corr[14] == pytest.approx(-2 * 0.125)   # dz = -2*cz
 
     def test_alk_c_aft_rotation_default_center(self):
         """ALK_C behind cockpit: 180 Y rotation, no center data → dz=0."""
@@ -338,8 +341,8 @@ class TestFaceConnectionSkipsCorrection:
         assert alk["_correction"][0] == pytest.approx(-1.0)
         assert alk["_correction"][10] == pytest.approx(-1.0)
         assert alk["_correction"][12] == pytest.approx(-2 * 0.284)
-        assert alk["_correction"][13] == pytest.approx(2 * 0.669)
-        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
+        assert alk["_correction"][13] == pytest.approx(2 * 0.023)
+        assert alk["_correction"][14] == pytest.approx(-2 * 0.125)
 
     def test_alk_with_default_at_gets_heuristic_correction(self):
         """ALK aft with no Up/At (defaults to identity) — heuristic fires."""
@@ -350,7 +353,7 @@ class TestFaceConnectionSkipsCorrection:
         ])
         alk = view._modules[1]
         assert alk["_correction"][0] == pytest.approx(-1.0)
-        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
+        assert alk["_correction"][14] == pytest.approx(-2 * 0.125)
 
     def test_turret_with_rotated_up_gets_identity_correction(self):
         """Turret with non-identity Up — save encodes rotation, skip heuristic."""
@@ -514,3 +517,127 @@ class TestModuleEditPanel:
         tab._selected_base_object = obj
         tab._move_module(2, -3.0)  # -Z
         assert obj["Position"][2] == pytest.approx(-9.0)
+
+
+# ---------------------------------------------------------------------------
+# WI-6: ALK ramp sub-mesh filtering
+# ---------------------------------------------------------------------------
+
+
+def _make_mesh(z_range, verts=100, x_range=(-1.5, 1.5), y_range=(-1.0, 1.0)):
+    """Build a minimal Mesh spanning the given Z range."""
+    z_min, z_max = z_range
+    x_min, x_max = x_range
+    y_min, y_max = y_range
+    vertices = (
+        (x_min, y_min, z_min),
+        (x_max, y_min, z_min),
+        (x_min, y_max, z_max),
+        (x_max, y_max, z_max),
+    )
+    # Pad to requested vertex count
+    vertices = vertices + ((0.0, 0.0, (z_min + z_max) / 2),) * max(0, verts - 4)
+    normals = ((0.0, 1.0, 0.0),) * len(vertices)
+    uvs = ((0.0, 0.0),) * len(vertices)
+    indices = (0, 1, 2, 1, 2, 3)
+    return Mesh(vertices=vertices, normals=normals, uvs=uvs, indices=indices)
+
+
+class TestAlkRampFilter:
+    """ALK ramp sub-meshes (extending beyond module grid cell) should be filtered."""
+
+    def test_keeps_main_body_mesh(self):
+        """Mesh 6 — main body centered at origin, Z [-3, 3] — kept."""
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        result = _filter_alk_ramp([body])
+        assert len(result) == 1
+
+    def test_keeps_hull_detail_mesh(self):
+        """Mesh 0 — hull detail Z [1.8, 3.25] — kept (barely within tolerance)."""
+        detail = _make_mesh(z_range=(1.8, 3.25), verts=698)
+        result = _filter_alk_ramp([detail])
+        assert len(result) == 1
+
+    def test_removes_ramp_extending_to_z6(self):
+        """Mesh 7 — ramp Z [0.07, 6.03] — removed when body present."""
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        ramp = _make_mesh(z_range=(0.07, 6.03), verts=726)
+        result = _filter_alk_ramp([body, ramp])
+        assert len(result) == 1
+        assert result[0] is body
+
+    def test_removes_ramp_rail_z4(self):
+        """Mesh 8 — ramp rail Z [0.58, 4.34] — removed when body present."""
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        rail = _make_mesh(z_range=(0.58, 4.34), verts=112)
+        result = _filter_alk_ramp([body, rail])
+        assert len(result) == 1
+        assert result[0] is body
+
+    def test_removes_ramp_side_pieces(self):
+        """Meshes 10/11 — ramp sides Z [0.48, 4.27] — removed when body present."""
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        side = _make_mesh(z_range=(0.48, 4.27), verts=115)
+        result = _filter_alk_ramp([body, side, side])
+        assert len(result) == 1
+
+    def test_mixed_keeps_body_removes_ramp(self):
+        """Realistic 12-mesh ALK: body + details kept, ramp pieces removed."""
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        hull = _make_mesh(z_range=(1.8, 3.25), verts=698)
+        small_panel = _make_mesh(z_range=(3.1, 3.23), verts=8)
+        trim = _make_mesh(z_range=(2.73, 2.88), verts=48)
+        frame = _make_mesh(z_range=(1.92, 3.23), verts=54)
+        roof_a = _make_mesh(z_range=(0.51, 2.36), verts=128)
+        roof_b = _make_mesh(z_range=(0.51, 2.36), verts=76)
+        face = _make_mesh(z_range=(1.5, 1.5), verts=4)
+        ramp_main = _make_mesh(z_range=(0.07, 6.03), verts=726)
+        ramp_rail = _make_mesh(z_range=(0.58, 4.34), verts=112)
+        ramp_side_a = _make_mesh(z_range=(0.48, 4.27), verts=115)
+        ramp_side_b = _make_mesh(z_range=(0.48, 4.27), verts=115)
+        all_meshes = [
+            body, hull, small_panel, trim, frame, roof_a, roof_b,
+            ramp_main, ramp_rail, face, ramp_side_a, ramp_side_b,
+        ]
+        result = _filter_alk_ramp(all_meshes)
+        assert len(result) == 8  # 12 - 4 ramp pieces
+
+    def test_never_returns_empty(self):
+        """Safety: if all meshes would be filtered, return all unchanged."""
+        ramp = _make_mesh(z_range=(0.07, 6.03), verts=726)
+        result = _filter_alk_ramp([ramp])
+        # Single mesh — if it's the only one, we already tested empty return above.
+        # With multiple ramp-only meshes, safety fallback should keep them.
+        ramps = [
+            _make_mesh(z_range=(0.07, 6.03), verts=726),
+            _make_mesh(z_range=(0.58, 4.34), verts=112),
+        ]
+        result = _filter_alk_ramp(ramps)
+        # All would be filtered → safety returns all
+        assert len(result) == 2
+
+    def test_set_mesh_data_applies_filter_for_alk(self):
+        """set_mesh_data should auto-filter ramp meshes for ALK modules in 3D mode."""
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        view = Corvette3DView()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_ALK_A", "Position": [0.0, 3.0, -15.0]},
+        ])
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        ramp = _make_mesh(z_range=(0.07, 6.03), verts=726)
+        view.set_mesh_data("B_ALK_A", [body, ramp])
+        assert len(view._mesh_data["B_ALK_A"]) == 1  # ramp filtered out
+
+    def test_set_mesh_data_does_not_filter_non_alk(self):
+        """Non-ALK modules should not have ramp filtering applied."""
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        view = Corvette3DView()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_HAB_A", "Position": [0.0, 3.0, -9.0]},
+        ])
+        body = _make_mesh(z_range=(-3.0, 3.0), verts=6408)
+        extending = _make_mesh(z_range=(0.07, 6.03), verts=726)
+        view.set_mesh_data("B_HAB_A", [body, extending])
+        assert len(view._mesh_data["B_HAB_A"]) == 2  # no filtering

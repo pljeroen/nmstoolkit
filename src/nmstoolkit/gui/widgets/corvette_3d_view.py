@@ -395,7 +395,7 @@ def _is_identity_orientation(
 # cached mesh data.  The correction matrix compensates for the mesh's
 # asymmetric origin so the module stays flush after 180° Y rotation.
 _ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
-    "B_ALK_A": (0.284, 0.669, 1.513),
+    "B_ALK_A": (0.284, 0.023, 0.125),  # center after ramp meshes filtered
     # B_ALK_B: no cached mesh data yet — defaults to (0, 0, 0)
     # B_ALK_C: needs measurement — defaults to (0, 0, 0)
 }
@@ -408,6 +408,26 @@ _LND_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
     "B_LND_A": (0.0, -1.691, -0.223),
     # B_LND_B through E: need measurement from cached mesh data
 }
+
+
+# ALK ramp sub-meshes extend well beyond the module's 3-unit grid cell.
+# They receive the same 180° Y correction as the main body, which renders
+# them incorrectly.  Filter them out before merging.
+_ALK_RAMP_Z_MAX = 3.5  # meshes with Z max above this are ramp geometry
+
+
+def _filter_alk_ramp(meshes: List["Mesh"]) -> List["Mesh"]:
+    """Remove ALK ramp sub-meshes that extend beyond the module grid cell."""
+    kept = []
+    for m in meshes:
+        if not m.vertices:
+            kept.append(m)
+            continue
+        z_max = max(v[2] for v in m.vertices)
+        if z_max <= _ALK_RAMP_Z_MAX:
+            kept.append(m)
+    # Safety: never return empty
+    return kept if kept else meshes
 
 
 def _module_mesh_correction(
@@ -871,6 +891,9 @@ class Corvette3DView(QOpenGLWidget):
     def set_mesh_data(self, module_id: str, meshes: List[Mesh]) -> None:
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
         if self._is_3d_mode:
+            stripped = module_id.lstrip("^")
+            if stripped.startswith("B_ALK_"):
+                meshes = _filter_alk_ramp(meshes)
             self._mesh_data[module_id] = meshes
         else:
             footprint = _get_module_footprint(module_id)
