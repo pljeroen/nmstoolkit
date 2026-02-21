@@ -1022,10 +1022,10 @@ class TestModuleMeshCorrection:
         assert corr[0] == pytest.approx(-1.0)   # col0.x flipped
         assert corr[5] == pytest.approx(1.0)    # col1.y unchanged
         assert corr[10] == pytest.approx(-1.0)  # col2.z flipped
-        # Center compensation: dx=-2*0.284, dy=2*0.023, dz=-2*0.125
+        # Center compensation: dx=-2*0.284, dy=2*0.669, dz=-2*1.513
         assert corr[12] == pytest.approx(-2 * 0.284)
-        assert corr[13] == pytest.approx(2 * 0.023)
-        assert corr[14] == pytest.approx(-2 * 0.125)
+        assert corr[13] == pytest.approx(2 * 0.669)
+        assert corr[14] == pytest.approx(-2 * 1.513)
 
     def test_alk_front_gets_identity(self):
         """ALK in front of cockpit keeps identity."""

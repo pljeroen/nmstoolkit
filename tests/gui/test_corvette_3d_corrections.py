@@ -174,10 +174,10 @@ class TestAlkZOffsetRemoved:
         assert corr[0] == pytest.approx(-1.0)
         assert corr[5] == pytest.approx(1.0)
         assert corr[10] == pytest.approx(-1.0)
-        # Translation compensates for mesh center (cx=0.284, cy=0.023, cz=0.125)
+        # Translation compensates for mesh center (cx=0.284, cy=0.669, cz=1.513)
         assert corr[12] == pytest.approx(-2 * 0.284)   # dx = -2*cx
-        assert corr[13] == pytest.approx(2 * 0.023)    # dy = 2*cy
-        assert corr[14] == pytest.approx(-2 * 0.125)   # dz = -2*cz
+        assert corr[13] == pytest.approx(2 * 0.669)    # dy = 2*cy
+        assert corr[14] == pytest.approx(-2 * 1.513)   # dz = -2*cz
 
     def test_alk_c_aft_rotation_default_center(self):
         """ALK_C behind cockpit: 180 Y rotation, no center data → dz=0."""
@@ -243,7 +243,7 @@ class TestLandingGearCorrection:
         assert corr[10] == pytest.approx(1.0)
         # Translation compensates for mesh center offset
         assert corr[12] == pytest.approx(0.0)     # dx = 0 (centered in X)
-        assert corr[13] == pytest.approx(1.691)    # dy = -cy (shift up)
+        assert corr[13] == pytest.approx(2.0)       # dy = -cy (shift up)
         assert corr[14] == pytest.approx(0.223)    # dz = -cz (shift forward)
 
     def test_lnd_without_caret(self):
@@ -251,7 +251,7 @@ class TestLandingGearCorrection:
         corr = _module_mesh_correction(
             "B_LND_A", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
         )
-        assert corr[13] == pytest.approx(1.691)
+        assert corr[13] == pytest.approx(2.0)
 
     def test_lnd_unknown_variant_gets_identity(self):
         """B_LND_B (no cached mesh data) → identity fallback."""
@@ -341,8 +341,8 @@ class TestFaceConnectionSkipsCorrection:
         assert alk["_correction"][0] == pytest.approx(-1.0)
         assert alk["_correction"][10] == pytest.approx(-1.0)
         assert alk["_correction"][12] == pytest.approx(-2 * 0.284)
-        assert alk["_correction"][13] == pytest.approx(2 * 0.023)
-        assert alk["_correction"][14] == pytest.approx(-2 * 0.125)
+        assert alk["_correction"][13] == pytest.approx(2 * 0.669)
+        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
 
     def test_alk_with_default_at_gets_heuristic_correction(self):
         """ALK aft with no Up/At (defaults to identity) — heuristic fires."""
@@ -353,7 +353,7 @@ class TestFaceConnectionSkipsCorrection:
         ])
         alk = view._modules[1]
         assert alk["_correction"][0] == pytest.approx(-1.0)
-        assert alk["_correction"][14] == pytest.approx(-2 * 0.125)
+        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
 
     def test_turret_with_rotated_up_gets_identity_correction(self):
         """Turret with non-identity Up — save encodes rotation, skip heuristic."""

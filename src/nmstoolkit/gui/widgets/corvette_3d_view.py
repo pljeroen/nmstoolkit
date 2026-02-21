@@ -395,7 +395,7 @@ def _is_identity_orientation(
 # cached mesh data.  The correction matrix compensates for the mesh's
 # asymmetric origin so the module stays flush after 180° Y rotation.
 _ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
-    "B_ALK_A": (0.284, 0.023, 0.125),  # center after ramp meshes filtered
+    "B_ALK_A": (0.284, 0.669, 1.513),  # visually confirmed — includes ramp in BB
     # B_ALK_B: no cached mesh data yet — defaults to (0, 0, 0)
     # B_ALK_C: needs measurement — defaults to (0, 0, 0)
 }
@@ -405,7 +405,7 @@ _ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
 # The mesh origin is offset from the connection surface; a pure translation
 # shifts the mesh to close the gap between gear and hull.
 _LND_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
-    "B_LND_A": (0.0, -1.691, -0.223),
+    "B_LND_A": (0.0, -2.0, -0.223),
     # B_LND_B through E: need measurement from cached mesh data
 }
 
