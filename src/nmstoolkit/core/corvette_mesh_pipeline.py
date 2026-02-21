@@ -143,6 +143,9 @@ def _filter_junk_meshes(meshes: List[Mesh]) -> List[Mesh]:
     _VOLUME_THRESHOLD = 50.0
     _DIM_LIMIT = 7.0
     _DETAIL_VERT_THRESHOLD = 500
+    _YSPAN_LIMIT = 5.0
+    _SUBFLOOR_Y = -2.0
+    _CORRIDOR_Z = 4.0
 
     filtered: List[Mesh] = []
     for m in meshes:
@@ -178,6 +181,16 @@ def _filter_junk_meshes(meshes: List[Mesh]) -> List[Mesh]:
 
         # R3: Reject oversized LOD hulls (any dim > 7 with low vertex count)
         if max(sx, sy, sz) > _DIM_LIMIT and n < _DETAIL_VERT_THRESHOLD:
+            continue
+
+        # R3b: Reject tall LOD hulls (Y span > 5 units — taller than any
+        # single module; catches simplified hulls that slipped past R3)
+        if sy > _YSPAN_LIMIT:
+            continue
+
+        # R3c: Reject sub-floor corridors (ramp/walkway geometry extending
+        # deep below floor AND far forward — e.g. airlock entry ramps)
+        if min_y < _SUBFLOOR_Y and max_z > _CORRIDOR_Z:
             continue
 
         filtered.append(m)

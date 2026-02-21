@@ -36,6 +36,7 @@ from nmstoolkit.gui.widgets.corvette_3d_view import (
     _mat4_multiply,
     _mat4_perspective,
     _mat4_translate,
+    _module_mesh_correction,
     _normalize,
     _row_to_layer,
 )
@@ -945,7 +946,7 @@ class TestMat4FromOrientation:
 
 
 class TestSetModules3dOrientation:
-    """Orientation tests — _mat4_from_orientation is available for future use."""
+    """Orientation tests — Up/At vectors from PersistentPlayerBases."""
 
     def _make_view(self):
         from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
@@ -960,6 +961,106 @@ class TestSetModules3dOrientation:
         mod = view._modules[0]
         assert mod["_render_pos"] == pytest.approx((6.0, 3.0, -9.0))
         assert mod["_3d_world_pos"] == pytest.approx((6.0, 3.0, -9.0))
+
+    def test_stores_up_at_from_input(self):
+        """set_modules_3d stores Up/At vectors when provided."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {
+                "ObjectID": "^B_ALK_A",
+                "Position": [0.0, 0.0, -12.0],
+                "Up": [0.0, 1.0, 0.0],
+                "At": [0.0, 0.0, -1.0],
+            },
+        ])
+        mod = view._modules[0]
+        assert mod["_up"] == pytest.approx((0.0, 1.0, 0.0))
+        assert mod["_at"] == pytest.approx((0.0, 0.0, -1.0))
+
+    def test_defaults_up_at_when_absent(self):
+        """set_modules_3d defaults Up=[0,1,0] At=[0,0,1] when not provided."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 0.0, 0.0]},
+        ])
+        mod = view._modules[0]
+        assert mod["_up"] == pytest.approx((0.0, 1.0, 0.0))
+        assert mod["_at"] == pytest.approx((0.0, 0.0, 1.0))
+
+    def test_model_matrix_uses_orientation(self):
+        """Model matrix from Up/At should include rotation, not just translation."""
+        # 180° rotation around Y: At=[0,0,-1]
+        up = (0.0, 1.0, 0.0)
+        at = (0.0, 0.0, -1.0)
+        model = _mat4_from_orientation(up, at, 6.0, 0.0, -12.0)
+        # Column 2 (At/forward) should be [0, 0, -1, 0]
+        assert model[8] == pytest.approx(0.0, abs=1e-6)   # at.x
+        assert model[9] == pytest.approx(0.0, abs=1e-6)   # at.y
+        assert model[10] == pytest.approx(-1.0, abs=1e-6)  # at.z
+        # Translation column should be correct
+        assert model[12] == pytest.approx(6.0)
+        assert model[13] == pytest.approx(0.0)
+        assert model[14] == pytest.approx(-12.0)
+
+    def test_identity_orientation_matches_translate(self):
+        """Identity Up/At produces same result as pure translation."""
+        up = (0.0, 1.0, 0.0)
+        at = (0.0, 0.0, 1.0)
+        model_orient = _mat4_from_orientation(up, at, 3.0, 6.0, -9.0)
+        model_trans = _mat4_translate(3.0, 6.0, -9.0)
+        for i in range(16):
+            assert model_orient[i] == pytest.approx(model_trans[i], abs=1e-6)
+
+
+class TestModuleMeshCorrection:
+    """Per-module mesh rotation corrections — position-aware."""
+
+    def test_alk_aft_gets_180_rotation_with_z_offset(self):
+        """ALK_A behind cockpit gets 180° Y + Z-offset for mesh asymmetry."""
+        # COK at Z=-3, ALK at Z=-15 (behind)
+        corr = _module_mesh_correction("^B_ALK_A", mod_z=-15.0, cok_z=-3.0)
+        assert corr[0] == pytest.approx(-1.0)   # col0.x flipped
+        assert corr[5] == pytest.approx(1.0)    # col1.y unchanged
+        assert corr[10] == pytest.approx(-1.0)  # col2.z flipped
+        # Z translation compensates for mesh center offset (2 * 1.513)
+        assert corr[14] == pytest.approx(3.026, abs=0.01)
+
+    def test_alk_front_gets_identity(self):
+        """ALK in front of cockpit keeps identity."""
+        # COK at Z=-3, ALK at Z=3 (in front)
+        corr = _module_mesh_correction("^B_ALK_A", mod_z=3.0, cok_z=-3.0)
+        ident = _mat4_identity()
+        for i in range(16):
+            assert corr[i] == pytest.approx(ident[i])
+
+    def test_alk_b_aft_gets_180_with_default_offset(self):
+        """ALK_B (ambassador) — no cached mesh data, Z offset defaults to 0."""
+        corr = _module_mesh_correction("^B_ALK_B", mod_z=-33.0, cok_z=-3.0)
+        assert corr[0] == pytest.approx(-1.0)
+        assert corr[14] == pytest.approx(0.0)  # unknown variant, no offset
+
+    def test_alk_c_aft_gets_180_with_z_offset(self):
+        """ALK_C behind cockpit gets 180° + Z-offset (2 * -0.75 = -1.5)."""
+        corr = _module_mesh_correction("B_ALK_C", mod_z=-6.0, cok_z=0.0)
+        assert corr[0] == pytest.approx(-1.0)
+        assert corr[14] == pytest.approx(-1.5, abs=0.01)
+
+    def test_non_alk_returns_identity(self):
+        """Other modules always get identity regardless of position."""
+        corr = _module_mesh_correction("^B_COK_A", mod_z=-3.0, cok_z=-3.0)
+        ident = _mat4_identity()
+        for i in range(16):
+            assert corr[i] == pytest.approx(ident[i])
+
+    def test_alk_at_same_z_as_cockpit_gets_identity(self):
+        """ALK at same Z as cockpit — not behind, so identity."""
+        corr = _module_mesh_correction("^B_ALK_A", mod_z=-3.0, cok_z=-3.0)
+        assert corr[0] == pytest.approx(1.0)
+
+    def test_no_cockpit_defaults_identity(self):
+        """When cockpit Z is None (no cockpit found), ALK gets identity."""
+        corr = _module_mesh_correction("^B_ALK_A", mod_z=-15.0, cok_z=None)
+        assert corr[0] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1192,61 @@ class TestFilterJunkMeshes:
     def test_single_mesh_always_kept(self):
         """Single mesh is never filtered even if it looks bad."""
         m = _make_mesh([-3, 3], [0, 3], [20, 26])
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    # --- R3b: Reject tall LOD hulls (Y span > 5) ---
+
+    def test_rejects_tall_lod_hull(self):
+        """B_TRU_A LOD hull: 1428 verts, Y span 6.03 — rejected."""
+        good = _make_mesh_n(6000, (-3, 3), (0, 3), (-3, 3))
+        bad = _make_mesh_n(1428, (-2.9, 2.9), (-3.0, 3.03), (-2.6, 2.6))  # Yspan=6.03
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_keeps_normal_height_mesh(self):
+        """Normal hull at Y=[0,3] (span=3) is kept."""
+        m = _make_mesh_n(1500, (-3, 3), (0, 3), (-3, 3))  # Yspan=3
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    def test_keeps_two_storey_mesh(self):
+        """HAB module spanning 2 rows at Y=[0,4.5] (span=4.5) is kept."""
+        m = _make_mesh_n(5000, (-3, 3), (0, 4.5), (-6, 6))  # Yspan=4.5
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    # --- R3c: Reject sub-floor corridors (Y min < -2 AND Z max > 4) ---
+
+    def test_rejects_ramp_corridor(self):
+        """B_ALK_A ramp: 1566 verts, extends Y=-3.20 and Z=5.66 — rejected."""
+        good = _make_mesh_n(6408, (-3, 3), (-1.5, 1.5), (-3, 3))
+        bad = _make_mesh_n(1566, (-1.5, 1.5), (-3.20, 0.21), (0.38, 5.66))
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_rejects_ramp_underside(self):
+        """B_ALK_A ramp underside: 336 verts, Y=-3.06 and Z=5.56 — rejected."""
+        good = _make_mesh_n(6408, (-3, 3), (-1.5, 1.5), (-3, 3))
+        bad = _make_mesh_n(336, (-1.5, 1.5), (-3.06, -0.45), (1.21, 5.56))
+        result = _filter_junk_meshes([good, bad])
+        assert len(result) == 1
+
+    def test_keeps_landing_gear(self):
+        """B_LND_A mesh: Y=[-1.50, 0.83], Z=[-0.78, 2.33] — safe from R3c."""
+        gear = _make_mesh_n(800, (-1.5, 1.5), (-1.50, 0.83), (-0.78, 2.33))
+        result = _filter_junk_meshes([gear])
+        assert len(result) == 1
+
+    def test_keeps_deep_but_short_mesh(self):
+        """Mesh with Y min < -2 but Z max < 4 — not a corridor."""
+        m = _make_mesh_n(800, (-2, 2), (-2.5, 1.0), (-1, 2))  # Z max=2
+        result = _filter_junk_meshes([m])
+        assert len(result) == 1
+
+    def test_keeps_forward_but_not_deep_mesh(self):
+        """Mesh with Z max > 4 but Y min > -2 — not a corridor."""
+        m = _make_mesh_n(800, (-2, 2), (0, 3), (-1, 5))  # Y min=0
         result = _filter_junk_meshes([m])
         assert len(result) == 1
 

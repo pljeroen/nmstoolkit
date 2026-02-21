@@ -331,6 +331,40 @@ def _mat4_translate(x: float, y: float, z: float) -> List[float]:
     ]
 
 
+# Mesh Z-center offsets per ALK variant.  Used to compensate for asymmetric
+# meshes when rotating 180° around Y so the bounding volume stays in place.
+_ALK_Z_CENTER: Dict[str, float] = {
+    "B_ALK_A": 1.513,
+    "B_ALK_C": -0.750,
+}
+
+
+def _module_mesh_correction(
+    module_id: str,
+    mod_z: float = 0.0,
+    cok_z: Optional[float] = None,
+) -> List[float]:
+    """Return a local-space correction matrix for a module.
+
+    Airlock (ALK) meshes face +Z in the scene file.  When placed aft of the
+    cockpit they need a 180° Y rotation so the entrance faces the ship body.
+    A Z translation of ``2 * center_z`` compensates for mesh asymmetry so the
+    bounding volume stays aligned with the placement point.
+    Front-facing airlocks keep identity.
+    """
+    stripped = module_id.lstrip("^")
+    if stripped.startswith("B_ALK_") and cok_z is not None and mod_z < cok_z:
+        variant = stripped[:7]  # "B_ALK_A", "B_ALK_B", or "B_ALK_C"
+        dz = 2.0 * _ALK_Z_CENTER.get(variant, 0.0)
+        return [
+            -1, 0, 0, 0,
+             0, 1, 0, 0,
+             0, 0,-1, 0,
+             0, 0, dz, 1,
+        ]
+    return _mat4_identity()
+
+
 def _mat4_from_orientation(
     up: Tuple[float, float, float],
     at: Tuple[float, float, float],
@@ -675,6 +709,7 @@ class Corvette3DView(QOpenGLWidget):
         """Set module data from PersistentPlayerBases 3D objects.
 
         Each dict must have: ObjectID (str), Position (list of 3 floats).
+        Optional: Up (list of 3 floats), At (list of 3 floats) for orientation.
         Positions are raw game coordinates — no scaling applied.
         Meshes are rendered at their original geometry scale.
         """
@@ -686,16 +721,34 @@ class Corvette3DView(QOpenGLWidget):
             self.update()
             return
 
+        # Find cockpit Z for airlock orientation correction.
+        cok_z: Optional[float] = None
+        for obj in modules:
+            oid = obj["ObjectID"].lstrip("^")
+            if oid.startswith("B_COK_"):
+                cok_z = float(obj["Position"][2])
+                break
+
         positions = []
         for obj in modules:
             pos = obj["Position"]
             x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
             positions.append((x, y, z))
 
+            up_raw = obj.get("Up", [0.0, 1.0, 0.0])
+            at_raw = obj.get("At", [0.0, 0.0, 1.0])
+            up = (float(up_raw[0]), float(up_raw[1]), float(up_raw[2]))
+            at = (float(at_raw[0]), float(at_raw[1]), float(at_raw[2]))
+
+            correction = _module_mesh_correction(obj["ObjectID"], mod_z=z, cok_z=cok_z)
+
             self._modules.append({
                 "Id": obj["ObjectID"],
                 "Index": {"X": 0, "Y": 0},
                 "_render_pos": (x, y, z),
+                "_up": up,
+                "_at": at,
+                "_correction": correction,
                 "_layer": 0,
                 "_layer_row": 0,
                 "_3d_world_pos": (x, y, z),
@@ -849,7 +902,11 @@ class Corvette3DView(QOpenGLWidget):
             render_pos = slot.get("_render_pos")
             if render_pos is not None:
                 mx, my, mz = render_pos
-                model = _mat4_translate(mx, my, mz)
+                up = slot.get("_up", (0.0, 1.0, 0.0))
+                at = slot.get("_at", (0.0, 0.0, 1.0))
+                orient = _mat4_from_orientation(up, at, mx, my, mz)
+                correction = slot.get("_correction", _mat4_identity())
+                model = _mat4_multiply(orient, correction)
                 is_selected = self._selected == (slot_idx, 0, 0)
             else:
                 idx = slot.get("Index", {})
