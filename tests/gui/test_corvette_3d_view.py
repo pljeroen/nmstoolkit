@@ -1016,9 +1016,12 @@ class TestModuleMeshCorrection:
     """Per-module mesh rotation corrections — position-aware."""
 
     def test_alk_aft_gets_180_rotation(self):
-        """ALK_A behind cockpit gets 180° Y rotation with offset compensation."""
+        """ALK_A behind cockpit gets 180° Y rotation with center compensation."""
         # COK at Z=-3, ALK at Z=-15 (behind)
-        corr = _module_mesh_correction("^B_ALK_A", mod_z=-15.0, cok_z=-3.0)
+        corr = _module_mesh_correction(
+            "^B_ALK_A", mod_z=-15.0, cok_z=-3.0,
+            mesh_center=(0.284, 0.669, 1.513),
+        )
         assert corr[0] == pytest.approx(-1.0)   # col0.x flipped
         assert corr[5] == pytest.approx(1.0)    # col1.y unchanged
         assert corr[10] == pytest.approx(-1.0)  # col2.z flipped

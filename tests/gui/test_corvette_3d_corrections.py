@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 
 from nmstoolkit.core.mesh_data import Mesh
 from nmstoolkit.gui.widgets.corvette_3d_view import (
+    _compute_mesh_center,
     _filter_alk_ramp,
     _is_identity_orientation,
     _mat4_identity,
@@ -166,9 +167,10 @@ class TestAlkZOffsetRemoved:
     """ALK corrections: keep 180 deg Y rotation, remove Z-offset."""
 
     def test_alk_a_aft_rotation_with_center_compensation(self):
-        """ALK_A behind cockpit: 180 Y rotation with offset compensation."""
+        """ALK_A behind cockpit: 180 Y rotation with mesh_center compensation."""
         corr = _module_mesh_correction(
             "^B_ALK_A", mod_x=0.0, mod_y=3.0, mod_z=-15.0, cok_z=-3.0,
+            mesh_center=(0.284, 0.669, 1.513),
         )
         # 180 Y rotation: col0.x = -1, col2.z = -1
         assert corr[0] == pytest.approx(-1.0)
@@ -225,17 +227,18 @@ class TestAlkZOffsetRemoved:
 
 
 class TestLandingGearCorrection:
-    """Landing gear mesh has center at (0, -1.691, -0.223).
+    """Landing gear mesh origin is offset from the snap point.
 
-    The mesh hangs below the snap point, but the offset creates a visible
-    gap between the gear and the hull it connects to.  A pure translation
-    correction shifts the mesh to close the gap.
+    A pure translation correction (-cx, -cy, -cz) shifts the mesh to
+    close the gap between gear and hull.  The center comes from mesh
+    bounding-box data computed at load time.
     """
 
     def test_lnd_a_gets_translation_correction(self):
         """B_LND_A gets translation-only correction (no rotation)."""
         corr = _module_mesh_correction(
             "^B_LND_A", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
+            mesh_center=(0.0, -2.0, -0.223),
         )
         # No rotation — diagonal stays identity
         assert corr[0] == pytest.approx(1.0)
@@ -243,18 +246,19 @@ class TestLandingGearCorrection:
         assert corr[10] == pytest.approx(1.0)
         # Translation compensates for mesh center offset
         assert corr[12] == pytest.approx(0.0)     # dx = 0 (centered in X)
-        assert corr[13] == pytest.approx(2.0)       # dy = -cy (shift up)
-        assert corr[14] == pytest.approx(0.223)    # dz = -cz (shift forward)
+        assert corr[13] == pytest.approx(2.0)     # dy = -cy (shift up)
+        assert corr[14] == pytest.approx(0.223)   # dz = -cz (shift forward)
 
     def test_lnd_without_caret(self):
         """B_LND_A without caret prefix also gets correction."""
         corr = _module_mesh_correction(
             "B_LND_A", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
+            mesh_center=(0.0, -2.0, -0.223),
         )
         assert corr[13] == pytest.approx(2.0)
 
-    def test_lnd_unknown_variant_gets_identity(self):
-        """B_LND_B (no cached mesh data) → identity fallback."""
+    def test_lnd_no_mesh_data_gets_identity(self):
+        """LND without mesh_center defaults to (0,0,0) → identity translation."""
         corr = _module_mesh_correction(
             "^B_LND_B", mod_x=0.0, mod_y=0.0, mod_z=-18.0, cok_z=-3.0,
         )
@@ -262,11 +266,14 @@ class TestLandingGearCorrection:
 
     def test_lnd_correction_independent_of_position(self):
         """Landing gear correction is the same regardless of position."""
+        center = (0.0, -2.0, -0.223)
         corr1 = _module_mesh_correction(
             "^B_LND_A", mod_x=6.0, mod_y=3.0, mod_z=-18.0, cok_z=-3.0,
+            mesh_center=center,
         )
         corr2 = _module_mesh_correction(
             "^B_LND_A", mod_x=-6.0, mod_y=0.0, mod_z=-6.0, cok_z=-3.0,
+            mesh_center=center,
         )
         assert corr1 == pytest.approx(corr2)
 
@@ -325,7 +332,7 @@ class TestFaceConnectionSkipsCorrection:
         assert alk["_correction"] == pytest.approx(_mat4_identity())
 
     def test_alk_with_identity_at_gets_heuristic_correction(self):
-        """ALK aft with identity At — fallback heuristic fires."""
+        """ALK aft with identity At — fallback heuristic fires (180° Y)."""
         view = self._make_view()
         view.set_modules_3d([
             {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
@@ -337,12 +344,9 @@ class TestFaceConnectionSkipsCorrection:
             },
         ])
         alk = view._modules[1]
-        # Heuristic fires: 180 Y rotation with center compensation
+        # Heuristic fires: 180 Y rotation (translation depends on mesh data)
         assert alk["_correction"][0] == pytest.approx(-1.0)
         assert alk["_correction"][10] == pytest.approx(-1.0)
-        assert alk["_correction"][12] == pytest.approx(-2 * 0.284)
-        assert alk["_correction"][13] == pytest.approx(2 * 0.669)
-        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
 
     def test_alk_with_default_at_gets_heuristic_correction(self):
         """ALK aft with no Up/At (defaults to identity) — heuristic fires."""
@@ -353,7 +357,6 @@ class TestFaceConnectionSkipsCorrection:
         ])
         alk = view._modules[1]
         assert alk["_correction"][0] == pytest.approx(-1.0)
-        assert alk["_correction"][14] == pytest.approx(-2 * 1.513)
 
     def test_turret_with_rotated_up_gets_identity_correction(self):
         """Turret with non-identity Up — save encodes rotation, skip heuristic."""
@@ -641,3 +644,196 @@ class TestAlkRampFilter:
         extending = _make_mesh(z_range=(0.07, 6.03), verts=726)
         view.set_mesh_data("B_HAB_A", [body, extending])
         assert len(view._mesh_data["B_HAB_A"]) == 2  # no filtering
+
+
+# ---------------------------------------------------------------------------
+# WI-7: Dynamic mesh center computation
+# ---------------------------------------------------------------------------
+
+
+class TestComputeMeshCenter:
+    """BB center computed from mesh vertex data."""
+
+    def test_symmetric_mesh_centered_at_origin(self):
+        """Symmetric mesh has center at (0, 0, 0)."""
+        mesh = _make_mesh(z_range=(-3.0, 3.0), x_range=(-2.0, 2.0), y_range=(-1.0, 1.0))
+        center = _compute_mesh_center([mesh])
+        assert center == pytest.approx((0.0, 0.0, 0.0))
+
+    def test_asymmetric_mesh_has_offset_center(self):
+        """Mesh with asymmetric BB has non-zero center."""
+        mesh = _make_mesh(z_range=(0.0, 6.0), x_range=(-1.0, 1.0), y_range=(0.0, 2.0))
+        center = _compute_mesh_center([mesh])
+        assert center == pytest.approx((0.0, 1.0, 3.0))
+
+    def test_multiple_meshes_union_center(self):
+        """Center of multiple meshes is center of their union BB."""
+        m1 = _make_mesh(z_range=(-3.0, 0.0), x_range=(-1.0, 0.0), y_range=(-1.0, 0.0))
+        m2 = _make_mesh(z_range=(0.0, 3.0), x_range=(0.0, 1.0), y_range=(0.0, 1.0))
+        center = _compute_mesh_center([m1, m2])
+        assert center == pytest.approx((0.0, 0.0, 0.0))
+
+    def test_empty_list_returns_zero(self):
+        center = _compute_mesh_center([])
+        assert center == pytest.approx((0.0, 0.0, 0.0))
+
+    def test_mesh_with_no_vertices_returns_zero(self):
+        empty = Mesh(vertices=(), normals=(), uvs=(), indices=())
+        center = _compute_mesh_center([empty])
+        assert center == pytest.approx((0.0, 0.0, 0.0))
+
+
+class TestCorrectionWithMeshCenter:
+    """_module_mesh_correction uses caller-provided mesh_center."""
+
+    def test_alk_uses_provided_center(self):
+        """ALK translation derives from mesh_center parameter."""
+        corr = _module_mesh_correction(
+            "^B_ALK_A", mod_z=-15.0, cok_z=-3.0,
+            mesh_center=(1.0, 2.0, 3.0),
+        )
+        assert corr[0] == pytest.approx(-1.0)
+        assert corr[12] == pytest.approx(-2.0)   # -2*cx
+        assert corr[13] == pytest.approx(4.0)    # 2*cy
+        assert corr[14] == pytest.approx(-6.0)   # -2*cz
+
+    def test_lnd_uses_provided_center(self):
+        """LND translation derives from mesh_center parameter."""
+        corr = _module_mesh_correction(
+            "^B_LND_A", mod_z=-18.0, cok_z=-3.0,
+            mesh_center=(0.5, -1.5, -0.3),
+        )
+        assert corr[0] == pytest.approx(1.0)    # no rotation
+        assert corr[12] == pytest.approx(-0.5)  # -cx
+        assert corr[13] == pytest.approx(1.5)   # -cy
+        assert corr[14] == pytest.approx(0.3)   # -cz
+
+    def test_default_center_zero_no_translation(self):
+        """Without mesh_center, ALK gets 180° rotation but zero translation."""
+        corr = _module_mesh_correction(
+            "^B_ALK_A", mod_z=-15.0, cok_z=-3.0,
+        )
+        assert corr[0] == pytest.approx(-1.0)
+        assert corr[12] == pytest.approx(0.0)
+        assert corr[13] == pytest.approx(0.0)
+        assert corr[14] == pytest.approx(0.0)
+
+    def test_lnd_default_center_is_identity(self):
+        """LND with default center (0,0,0) yields identity translation."""
+        corr = _module_mesh_correction(
+            "^B_LND_A", mod_z=-18.0, cok_z=-3.0,
+        )
+        assert corr == pytest.approx(_mat4_identity())
+
+    def test_turret_ignores_mesh_center(self):
+        """Turret correction is rotation-only, mesh_center has no effect."""
+        corr = _module_mesh_correction(
+            "^B_TUR_A", mod_x=3.0, mod_z=-6.0, cok_z=-3.0,
+            mesh_center=(1.0, 2.0, 3.0),
+        )
+        assert corr[12] == pytest.approx(0.0)
+        assert corr[13] == pytest.approx(0.0)
+        assert corr[14] == pytest.approx(0.0)
+
+
+class TestDynamicCenterRecomputation:
+    """set_mesh_data computes center and recomputes corrections dynamically."""
+
+    def _make_view(self):
+        from nmstoolkit.gui.widgets.corvette_3d_view import Corvette3DView
+        return Corvette3DView()
+
+    def test_set_mesh_data_stores_center(self):
+        """After set_mesh_data, mesh center stored in view._mesh_centers."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_LND_A", "Position": [0.0, 0.0, -18.0]},
+        ])
+        mesh = _make_mesh(z_range=(-1.0, 1.0), x_range=(-0.5, 0.5), y_range=(-2.0, 0.0))
+        view.set_mesh_data("B_LND_A", [mesh])
+        assert "B_LND_A" in view._mesh_centers
+        assert view._mesh_centers["B_LND_A"] == pytest.approx((0.0, -1.0, 0.0))
+
+    def test_alk_center_from_all_meshes_before_filter(self):
+        """ALK center computed from ALL meshes including ramp, before filtering."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_ALK_A", "Position": [0.0, 3.0, -15.0]},
+        ])
+        body = _make_mesh(z_range=(-3.0, 3.0), x_range=(-1.5, 1.5), y_range=(-1.0, 1.0))
+        ramp = _make_mesh(z_range=(0.07, 6.03), x_range=(-1.0, 1.0), y_range=(0.0, 0.5))
+        view.set_mesh_data("B_ALK_A", [body, ramp])
+        # z: min(-3.0, 0.07)=-3.0, max(3.0, 6.03)=6.03 → cz=1.515
+        assert view._mesh_centers["B_ALK_A"][2] == pytest.approx(1.515)
+        # Mesh data should be ramp-filtered
+        assert len(view._mesh_data["B_ALK_A"]) == 1
+
+    def test_recomputes_alk_correction_after_mesh_data(self):
+        """After set_mesh_data, ALK correction uses computed center."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_ALK_A", "Position": [0.0, 3.0, -15.0]},
+        ])
+        alk = view._modules[1]
+        # Before mesh data: no center → zero translation
+        assert alk["_correction"][12] == pytest.approx(0.0)
+        # Provide mesh data with asymmetric center
+        body = _make_mesh(z_range=(-3.0, 3.0), x_range=(0.0, 2.0), y_range=(0.0, 2.0))
+        view.set_mesh_data("B_ALK_A", [body])
+        # Center = (1.0, 1.0, 0.0) → translation (-2, 2, 0)
+        assert alk["_correction"][12] == pytest.approx(-2.0)
+        assert alk["_correction"][13] == pytest.approx(2.0)
+        assert alk["_correction"][14] == pytest.approx(0.0)
+
+    def test_recomputes_lnd_correction_after_mesh_data(self):
+        """After set_mesh_data, LND correction uses computed center."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_LND_A", "Position": [0.0, 0.0, -18.0]},
+        ])
+        lnd = view._modules[1]
+        # Before mesh data: identity correction
+        assert lnd["_correction"] == pytest.approx(_mat4_identity())
+        # Provide mesh data
+        mesh = _make_mesh(z_range=(-0.5, 0.5), x_range=(-1.0, 1.0), y_range=(-2.0, 0.0))
+        view.set_mesh_data("B_LND_A", [mesh])
+        # Center = (0.0, -1.0, 0.0) → translation (0, 1.0, 0)
+        assert lnd["_correction"][12] == pytest.approx(0.0)
+        assert lnd["_correction"][13] == pytest.approx(1.0)
+        assert lnd["_correction"][14] == pytest.approx(0.0)
+
+    def test_new_variant_auto_corrects(self):
+        """B_LND_B gets correction from mesh data without hardcoded entry."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {"ObjectID": "^B_LND_B", "Position": [6.0, 0.0, -18.0]},
+        ])
+        mesh = _make_mesh(z_range=(-0.3, 0.3), x_range=(-1.0, 1.0), y_range=(-2.0, 0.0))
+        view.set_mesh_data("B_LND_B", [mesh])
+        lnd = view._modules[1]
+        # Center = (0, -1.0, 0) → translation (0, 1.0, 0)
+        assert lnd["_correction"][0] == pytest.approx(1.0)    # no rotation
+        assert lnd["_correction"][13] == pytest.approx(1.0)   # shift up
+
+    def test_non_identity_orientation_not_recomputed(self):
+        """Modules with non-identity orientation keep identity correction."""
+        view = self._make_view()
+        view.set_modules_3d([
+            {"ObjectID": "^B_COK_A", "Position": [0.0, 3.0, -3.0]},
+            {
+                "ObjectID": "^B_ALK_A",
+                "Position": [0.0, 3.0, -15.0],
+                "Up": [0.0, 1.0, 0.0],
+                "At": [0.0, 0.0, -1.0],
+            },
+        ])
+        body = _make_mesh(z_range=(-3.0, 3.0), x_range=(0.0, 2.0), y_range=(0.0, 2.0))
+        view.set_mesh_data("B_ALK_A", [body])
+        alk = view._modules[1]
+        # Should still be identity — face-connection overrides
+        assert alk["_correction"] == pytest.approx(_mat4_identity())

@@ -391,24 +391,6 @@ def _is_identity_orientation(
     return True
 
 
-# Mesh bounding-box center (cx, cy, cz) per ALK variant, measured from
-# cached mesh data.  The correction matrix compensates for the mesh's
-# asymmetric origin so the module stays flush after 180° Y rotation.
-_ALK_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
-    "B_ALK_A": (0.284, 0.669, 1.513),  # visually confirmed — includes ramp in BB
-    # B_ALK_B: no cached mesh data yet — defaults to (0, 0, 0)
-    # B_ALK_C: needs measurement — defaults to (0, 0, 0)
-}
-
-
-# Mesh bounding-box center (cx, cy, cz) per landing gear variant.
-# The mesh origin is offset from the connection surface; a pure translation
-# shifts the mesh to close the gap between gear and hull.
-_LND_MESH_CENTER: Dict[str, Tuple[float, float, float]] = {
-    "B_LND_A": (0.0, -2.0, -0.223),
-    # B_LND_B through E: need measurement from cached mesh data
-}
-
 
 # ALK ramp sub-meshes extend well beyond the module's 3-unit grid cell.
 # They receive the same 180° Y correction as the main body, which renders
@@ -430,20 +412,40 @@ def _filter_alk_ramp(meshes: List["Mesh"]) -> List["Mesh"]:
     return kept if kept else meshes
 
 
+def _compute_mesh_center(meshes: List["Mesh"]) -> Tuple[float, float, float]:
+    """Compute bounding-box center of all meshes combined.
+
+    Returns (0, 0, 0) for empty input or meshes with no vertices.
+    """
+    all_verts = [v for m in meshes for v in m.vertices]
+    if not all_verts:
+        return (0.0, 0.0, 0.0)
+    return (
+        (min(v[0] for v in all_verts) + max(v[0] for v in all_verts)) * 0.5,
+        (min(v[1] for v in all_verts) + max(v[1] for v in all_verts)) * 0.5,
+        (min(v[2] for v in all_verts) + max(v[2] for v in all_verts)) * 0.5,
+    )
+
+
 def _module_mesh_correction(
     module_id: str,
     mod_x: float = 0.0,
     mod_y: float = 0.0,
     mod_z: float = 0.0,
     cok_z: Optional[float] = None,
+    mesh_center: Tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> List[float]:
     """Return a local-space correction matrix for a module.
 
     Airlock (ALK) meshes face +Z in the scene file.  When placed aft of the
     cockpit they need a 180° Y rotation so the entrance faces the ship body.
+    The ``mesh_center`` compensates for asymmetric mesh origins.
 
     Turret (TUR) meshes have the gun pointing +Y.  Side-mounted turrets
     get Z-axis rotation based on their X position to face outward.
+
+    Landing gear (LND) meshes need a pure translation to close the gap
+    between the gear and the hull it connects to.
     """
     stripped = module_id.lstrip("^")
 
@@ -455,7 +457,7 @@ def _module_mesh_correction(
     # 180° Y rotation around the mesh center, not the origin, so the module
     # stays connected to its neighbor after flipping.
     if stripped.startswith("B_ALK_") and cok_z is not None and mod_z < cok_z:
-        cx, cy, cz = _ALK_MESH_CENTER.get(stripped, (0.0, 0.0, 0.0))
+        cx, cy, cz = mesh_center
         return [
             -1, 0, 0, 0,
              0, 1, 0, 0,
@@ -465,15 +467,13 @@ def _module_mesh_correction(
 
     # Landing gear: pure translation to compensate mesh origin offset.
     if stripped.startswith("B_LND_"):
-        offset = _LND_MESH_CENTER.get(stripped)
-        if offset is not None:
-            cx, cy, cz = offset
-            return [
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                -cx, -cy, -cz, 1,
-            ]
+        cx, cy, cz = mesh_center
+        return [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            -cx, -cy, -cz, 1,
+        ]
 
     return _mat4_identity()
 
@@ -776,6 +776,8 @@ class Corvette3DView(QOpenGLWidget):
         self._mesh_cache: Dict[str, _GpuMesh] = {}  # module_id → GPU mesh
         self._texture_cache: Dict[str, int] = {}  # module_id → GL texture ID
         self._mesh_data: Dict[str, List[Mesh]] = {}  # module_id → domain meshes
+        self._mesh_centers: Dict[str, Tuple[float, float, float]] = {}  # module_type → BB center
+        self._cok_z: Optional[float] = None  # cockpit Z for ALK correction
         self._scene_transforms: Dict[str, List[List[float]]] = {}  # module_id → world matrices
         self._normal_map_cache: Dict[str, int] = {}  # module_id → GL normal map texture ID
         self._show_grid = True
@@ -841,6 +843,7 @@ class Corvette3DView(QOpenGLWidget):
             if oid.startswith("B_COK_"):
                 cok_z = float(obj["Position"][2])
                 break
+        self._cok_z = cok_z
 
         positions = []
         for obj in modules:
@@ -854,7 +857,12 @@ class Corvette3DView(QOpenGLWidget):
             at = (float(at_raw[0]), float(at_raw[1]), float(at_raw[2]))
 
             if _is_identity_orientation(up, at):
-                correction = _module_mesh_correction(obj["ObjectID"], mod_x=x, mod_y=y, mod_z=z, cok_z=cok_z)
+                stripped = obj["ObjectID"].lstrip("^")
+                center = self._mesh_centers.get(stripped, (0.0, 0.0, 0.0))
+                correction = _module_mesh_correction(
+                    obj["ObjectID"], mod_x=x, mod_y=y, mod_z=z,
+                    cok_z=cok_z, mesh_center=center,
+                )
             else:
                 correction = _mat4_identity()
 
@@ -892,9 +900,13 @@ class Corvette3DView(QOpenGLWidget):
         """Provide parsed mesh data for a module type. Will be uploaded on next paint."""
         if self._is_3d_mode:
             stripped = module_id.lstrip("^")
+            # Compute BB center from ALL meshes before any filtering.
+            center = _compute_mesh_center(meshes)
+            self._mesh_centers[stripped] = center
             if stripped.startswith("B_ALK_"):
                 meshes = _filter_alk_ramp(meshes)
             self._mesh_data[module_id] = meshes
+            self._recompute_corrections(stripped)
         else:
             footprint = _get_module_footprint(module_id)
             self._mesh_data[module_id] = _fit_meshes_to_cell(
@@ -902,6 +914,28 @@ class Corvette3DView(QOpenGLWidget):
             )
         # Invalidate cached GPU mesh so it gets re-uploaded
         self._mesh_cache.pop(module_id, None)
+
+    def _recompute_corrections(self, module_type: str) -> None:
+        """Recompute correction matrices for modules matching *module_type*.
+
+        Called when mesh data arrives after set_modules_3d(), so the correction
+        can use the now-known mesh bounding-box center.
+        """
+        center = self._mesh_centers.get(module_type, (0.0, 0.0, 0.0))
+        for mod in self._modules:
+            mod_stripped = mod["Id"].lstrip("^")
+            if mod_stripped != module_type:
+                continue
+            up = mod.get("_up", (0.0, 1.0, 0.0))
+            at = mod.get("_at", (0.0, 0.0, 1.0))
+            if not _is_identity_orientation(up, at):
+                continue  # face-connection orientation, keep identity
+            pos = mod.get("_3d_world_pos", (0.0, 0.0, 0.0))
+            mod["_correction"] = _module_mesh_correction(
+                mod["Id"], mod_x=pos[0], mod_y=pos[1], mod_z=pos[2],
+                cok_z=self._cok_z, mesh_center=center,
+            )
+        self.update()
 
     def set_texture(self, module_id: str, png_path: Path) -> None:
         """Set texture for a module type from a PNG file path."""
